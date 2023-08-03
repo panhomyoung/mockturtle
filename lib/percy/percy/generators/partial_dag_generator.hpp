@@ -560,6 +560,23 @@ inline std::vector<partial_dag> pd_generate(int nr_vertices)
     return dags;
 }
 
+inline std::vector<partial_dag> pd_generate_filter(int nr_vertices, int nr_in) {
+    partial_dag g;
+    partial_dag_generator gen;
+    std::vector<partial_dag> dags;
+
+    gen.set_callback([&g, &dags, nr_in](partial_dag_generator* gen) {
+      for (int i = 0; i < gen->nr_vertices(); i++)
+        g.set_vertex(i, gen->_js[i], gen->_ks[i]);
+      if (g.nr_pi_fanins() >= nr_in) dags.push_back(g);
+    });
+
+    g.reset(2, nr_vertices);
+    gen.reset(nr_vertices);
+    gen.count_dags();
+    return dags;
+}
+
 #ifndef DISABLE_NAUTY
 inline std::vector<partial_dag> pd_generate_nonisomorphic(int nr_vertices)
 {

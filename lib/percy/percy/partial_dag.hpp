@@ -139,6 +139,26 @@ namespace percy
                 return vertices.size();
             }
 
+            int nr_level() {
+                int maxLevel = 0, n = vertices.size();
+                std::vector<int> inDegree(n + 1, 0);
+                std::vector<int> normal(2, 0);
+                for (int i = 0; i < n; i++) {
+                    if (vertices[i] == normal) inDegree[i + 1] = 1;
+                }
+                for (int i = 0; i < n; i++) {
+                    if (vertices[i][0] == 0 && vertices[i][1] == 0) {
+                        continue;
+                    } else {
+                        int levelNow = std::max(inDegree[vertices[i][0]],
+                                                inDegree[vertices[i][1]]);
+                        inDegree[i + 1] = levelNow + 1;
+                    }
+                }
+                maxLevel = inDegree[inDegree.size() - 1];
+                return maxLevel;
+            }
+
 #ifndef DISABLE_NAUTY
             bool is_isomorphic(const partial_dag& g) const
             {

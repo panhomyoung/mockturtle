@@ -72,6 +72,26 @@ namespace percy
             const std::vector<int>& get_step(int i) const { return steps[i]; }
             const std::vector<int>& get_outputs() const { return outputs; }
 
+            int get_nr_level() {
+                int maxLevel = 0, n = steps.size();
+                std::vector<int> inDegree(n + nr_in, 0);
+                for (int i = 0; i < n; i++) {
+                    if (steps[i][0] < nr_in && steps[i][1] < nr_in)
+                      inDegree[i + nr_in] = 1;
+                }
+                for (int i = 0; i < n; i++) {
+                    if (steps[i][0] < nr_in && steps[i][1] < nr_in)
+                      continue;
+                    else {
+                      int levelNow = std::max(inDegree[steps[i][0]],
+                                              inDegree[steps[i][1]]);
+                      inDegree[i + nr_in] = levelNow + 1;
+                    }
+                }
+                maxLevel = inDegree[inDegree.size() - 1];
+                return maxLevel;
+            }
+
             const dynamic_truth_table& get_operator(int i) const
             {
               return operators.at(i);
@@ -114,6 +134,10 @@ namespace percy
                     steps[i][j] = in[j];
                 }
                 operators[i] = op;
+            }
+
+            void set_step(int i, const int* const in) {
+                for (int j = 0; j < fanin; j++) steps[i][j] = in[j];
             }
 
             void
@@ -725,6 +749,192 @@ namespace percy
             print_dot()
             {
                 to_dot(std::cout);
+            }
+
+            std::string hex_inv(std::string tt) {
+                std::string tt_temp;
+                if (tt == "1")
+                    tt_temp = "e";
+                else if (tt == "2")
+                    tt_temp = "d";
+                else if (tt == "3")
+                    tt_temp = "c";
+                else if (tt == "4")
+                    tt_temp = "b";
+                else if (tt == "5")
+                    tt_temp = "a";
+                else if (tt == "6")
+                    tt_temp = "9";
+                else if (tt == "7")
+                    tt_temp = "8";
+                else if (tt == "8")
+                    tt_temp = "7";
+                else if (tt == "9")
+                    tt_temp = "6";
+                else if (tt == "a")
+                    tt_temp = "5";
+                else if (tt == "b")
+                    tt_temp = "4";
+                else if (tt == "c")
+                    tt_temp = "3";
+                else if (tt == "d")
+                    tt_temp = "2";
+                else if (tt == "e")
+                    tt_temp = "1";
+                else
+                    tt_temp = "0";
+                return tt_temp;
+            }
+
+            std::string hex2int(std::string tt) {
+                std::string tt_temp = tt;
+                if (tt == "a")
+                    tt_temp = "10";
+                else if (tt == "b")
+                    tt_temp = "11";
+                else if (tt == "c")
+                    tt_temp = "12";
+                else if (tt == "d")
+                    tt_temp = "13";
+                else if (tt == "e")
+                    tt_temp = "14";
+                else if (tt == "f")
+                    tt_temp = "15";
+                return tt_temp;
+            }
+
+            void to_npn(std::ostream& s) {
+                for (size_t k = 0; k < steps.size() - 1; k++) {
+                    const auto& step = steps[k];
+                    const auto idx = nr_in + k + 1;
+                    s << idx << "-";
+                    s << hex2int(kitty::to_hex(operators[k])) << "-";
+                    for (int l = 0; l < fanin; l++) {
+                        s << step[l] + 1;
+                        if (l < fanin - 1)
+                            s << "-";
+                        else
+                            s << " ";
+                    }
+                }
+                const auto& step = steps[steps.size() - 1];
+                const auto idx = nr_in + steps.size();
+                s << idx << "-";
+                const auto out = outputs[0];
+                const auto inv = out & 1;
+                s << (inv ? hex2int(hex_inv(
+                                kitty::to_hex(operators[steps.size() - 1])))
+                          : hex2int(kitty::to_hex(operators[steps.size() - 1])))
+                  << "-";
+                for (int l = 0; l < fanin; l++) {
+                    s << step[l] + 1;
+                    if (l < fanin - 1)
+                        s << "-";
+                    else
+                        s << " ";
+                }
+            }
+
+            void print_npn() { to_npn(std::cout); }
+
+            void to_bench(std::ostream& s) {
+                for (int i = 0; i < nr_in; i++) {
+                    const auto idx = i + 1;
+                    s << "INPUT(n" << idx << ")\n";
+                }
+                for (size_t j = 0u; j < outputs.size(); j++) {
+                    const auto out = outputs[j];
+                    s << "OUTPUT(po" << j << ")\n";
+                }
+                s << "n0 = gnd\n";
+                for (size_t k = 0; k < steps.size(); k++) {
+                    const auto& step = steps[k];
+                    const auto idx = nr_in + k + 1;
+                    s << "n" << idx << " = ";
+                    s << "LUT 0x" << kitty::to_hex(operators[k]) << " (";
+                    for (int l = 0; l < fanin; l++) {
+                        s << "n" << step[l] + 1;
+                        if (l < fanin - 1)
+                            s << ", ";
+                        else
+                            s << ")\n";
+                    }
+                }
+                for (size_t m = 0u; m < outputs.size(); m++) {
+                    const auto out = outputs[m];
+                    const auto inv = out & 1;
+                    const auto var = out >> 1;
+                    s << "po" << m << " = LUT 0x" << (inv ? "1" : "2") << " (n"
+                      << var << ")\n";
+                }
+            }
+
+            void print_bench() { to_bench(std::cout); }
+
+            void bench_infor(std::vector<int>& node, std::vector<int>& left,
+                             std::vector<int>& right) {
+                for (size_t i = 0; i < steps.size(); i++) {
+                    const auto& step = steps[i];
+                    const auto idx = nr_in + i + 1;
+                    node.push_back(idx);
+                    left.push_back(step[0] + 1);
+                    right.push_back(step[1] + 1);
+                }
+            }
+
+            void store_bench(int count) {
+                std::ofstream file;
+                std::string filename = "r_" + std::to_string(count) + ".bench";
+                file.open(filename, std::ios::out);
+                for (int i = 0; i < nr_in; i++) {
+                    const auto idx = i + 1;
+                    file << "INPUT(n" << idx << ")\n";
+                }
+                for (size_t j = 0u; j < outputs.size(); j++) {
+                    const auto out = outputs[j];
+                    file << "OUTPUT(po" << j << ")\n";
+                }
+                file << "n0 = gnd\n";
+                for (size_t k = 0; k < steps.size(); k++) {
+                    const auto& step = steps[k];
+                    const auto idx = nr_in + k + 1;
+                    file << "n" << idx << " = ";
+                    file << "LUT 0x" << kitty::to_hex(operators[k]) << " (";
+                    for (int l = 0; l < fanin; l++) {
+                        file << "n" << step[l] + 1;
+                        if (l < fanin - 1)
+                            file << ", ";
+                        else
+                            file << ")\n";
+                    }
+                }
+                for (size_t m = 0u; m < outputs.size(); m++) {
+                    const auto out = outputs[m];
+                    const auto inv = out & 1;
+                    const auto var = out >> 1;
+                    file << "po" << m << " = LUT 0x" << (inv ? "1" : "2")
+                         << " (n" << var << ")\n";
+                }
+                file.close();
+            }
+
+            void bench_infor(std::vector<int>& node, std::vector<int>& left,
+                             std::vector<int>& right,
+                             std::vector<std::string>& tt) {
+                for (size_t i = 0; i < steps.size(); i++) {
+                    const auto& step = steps[i];
+                    const auto idx = nr_in + i + 1;
+                    node.push_back(idx);
+                    tt.push_back(kitty::to_hex(operators[i]));
+                    left.push_back(step[0] + 1);
+                    right.push_back(step[1] + 1);
+                    if (i == steps.size() - 1) {
+                        const auto inv = outputs[0] & 1;
+                        if (inv ? true : false) {
+                            tt.push_back("1");
+                        }
+                    }
+                }
             }
 
             /*******************************************************************

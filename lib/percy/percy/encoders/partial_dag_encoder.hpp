@@ -1002,6 +1002,52 @@ namespace percy
                 ((spec.out_inv) & 1));
         }
 
+        void extract_bench(const spec& spec, const partial_dag& dag,
+                           chain& chain) {
+            int op_inputs[2];
+
+            chain.reset(spec.nr_in, 1, spec.nr_steps, 2);
+
+            for (int i = 0; i < spec.nr_steps; i++) {
+                auto nr_pi_fanins = 0;
+                const auto& vertex = dag.get_vertex(i);
+                if (vertex[1] == FANIN_PI)
+                    nr_pi_fanins = 2;
+                else if (vertex[0] == FANIN_PI)
+                    nr_pi_fanins = 1;
+
+                if (nr_pi_fanins == 1) {
+                    for (int j = 0; j < spec.nr_in; j++) {
+                        const auto sel_var = get_sel_var(spec, dag, i, j);
+                        if (solver->var_value(sel_var)) {
+                            op_inputs[0] = j;
+                            break;
+                        }
+                    }
+                    op_inputs[1] = spec.nr_in + vertex[1] - 1;
+                } else if (nr_pi_fanins == 2) {
+                    auto ctr = 0;
+                    for (int k = 1; k < spec.nr_in; k++) {
+                        for (int j = 0; j < k; j++) {
+                            const auto sel_var =
+                                get_sel_var(spec, dag, i, ctr++);
+                            if (solver->var_value(sel_var)) {
+                                op_inputs[0] = j;
+                                op_inputs[1] = k;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    op_inputs[0] = vertex[0] + spec.nr_in - 1;
+                    op_inputs[1] = vertex[1] + spec.nr_in - 1;
+                }
+                chain.set_step(i, op_inputs);
+            }
+            chain.set_output(
+                0, ((spec.nr_steps + spec.nr_in) << 1) + ((spec.out_inv) & 1));
+        }
+
         void print_solver_state(spec& spec, const partial_dag& dag)
         {
             for (auto i = 0; i < spec.nr_steps; i++) {

@@ -1935,5 +1935,32 @@ namespace percy
 
         return size_found == PD_SIZE_CONST ? failure : success;
     }
+
+    inline bool stp_dag_cegar_synthesize(spec& spec, chain& chain,
+                                         const partial_dag& dag,
+                                         solver_wrapper& solver,
+                                         partial_dag_encoder& encoder) {
+        spec.nr_steps = dag.nr_vertices();
+        solver.restart();
+        if (!encoder.cegar_encode(spec, dag)) return false;
+        while (true) {
+            auto stat = solver.solve(0);
+            if (stat == success) {
+                auto sim_tt = encoder.simulate(spec, dag);
+                if (spec.out_inv) sim_tt = ~sim_tt;
+                auto xor_tt = sim_tt ^ (spec[0]);
+                auto first_one = kitty::find_first_one_bit(xor_tt);
+                if (first_one == -1) {
+                    encoder.extract_bench(spec, dag, chain);
+                    return true;
+                }
+                if (!encoder.create_tt_clauses(spec, dag, first_one - 1))
+                    return false;
+                else if (!encoder.fix_output_sim_vars(spec, first_one - 1))
+                    return false;
+            } else
+                return false;
+        }
+    }
 }
 
