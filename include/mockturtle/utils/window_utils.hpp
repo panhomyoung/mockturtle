@@ -809,6 +809,111 @@ void levelized_expand_towards_tfo( Ntk const& ntk, std::vector<typename Ntk::nod
   }
 }
 
+template <typename Ntk, bool auto_resize = true>
+void levelized_expand_towards_tfo_mffw(
+    Ntk const& ntk, std::vector<typename Ntk::node> const& inputs,
+    std::vector<typename Ntk::node>& nodes,
+    std::vector<std::vector<typename Ntk::node>>& levels) {
+  using node = typename Ntk::node;
+
+  static constexpr uint32_t const MAX_FANOUTS{5u};
+
+  ntk.new_color();
+
+  /* mapping from level to nodes (which nodes are on a certain level?) */
+  levels.resize(ntk.depth() + 1);
+
+  /* list of indices of used levels (avoid iterating over all levels) */
+  std::vector<uint32_t> used;
+
+  /* mark all inputs and fill their level information into `levels` and `used`
+   */
+  for (const auto& i : inputs) {
+    uint32_t const node_level = ntk.level(i);
+    ntk.paint(i);
+    if constexpr (auto_resize) {
+      if (levels.size() <= node_level) {
+        levels.resize(std::max(uint32_t(2 * levels.size()), node_level));
+      }
+    }
+    levels.at(node_level).push_back(i);
+    if (std::find(std::begin(used), std::end(used), node_level) ==
+        std::end(used)) {
+      used.push_back(node_level);
+    }
+  }
+
+  /* mark all nodes and fill their level information into `levels` and `used` */
+  for (const auto& n : nodes) {
+    uint32_t const node_level = ntk.level(n);
+    ntk.paint(n);
+    if constexpr (auto_resize) {
+      if (levels.size() <= node_level) {
+        levels.resize(std::max(uint32_t(2 * levels.size()), node_level));
+      }
+    }
+    levels.at(node_level).push_back(n);
+    if (std::find(std::begin(used), std::end(used), node_level) ==
+        std::end(used)) {
+      used.push_back(node_level);
+    }
+  }
+
+  std::sort(std::begin(used), std::end(used));
+
+  for (uint32_t index = 0u; index < used.size(); ++index) {
+    std::vector<node>& level = levels.at(used[index]);
+    for (auto j = 0u; j < level.size(); ++j) {
+      ntk.foreach_fanout(level[j], [&](node const& fo, uint64_t index) {
+        /* avoid getting stuck on nodes with many fanouts */
+        if (index == MAX_FANOUTS) {
+          return false;
+        }
+
+        /* ignore nodes wihout fanins */
+        if (ntk.is_constant(fo) || ntk.is_ci(fo)) {
+          return true;
+        }
+
+        /* check all fanouts of nodes where both of its fanins are not in the
+         * window */
+        bool target = false;
+        ntk.foreach_fanin(fo, [&](auto const& f) {
+          for (auto x : nodes) {
+            if (x == ntk.get_node(f)) target = true;
+          }
+        });
+        if (!target) return true;
+
+        if (ntk.eval_color(
+                fo, [&ntk](auto c) { return c != ntk.current_color(); }) &&
+            ntk.eval_fanins_color(
+                fo, [&ntk](auto c) { return c == ntk.current_color(); })) {
+          /* add fanout to nodes */
+          nodes.push_back(fo);
+
+          /* update data structured */
+          uint32_t const node_level = ntk.level(fo);
+          ntk.paint(fo);
+          if constexpr (auto_resize) {
+            if (levels.size() <= node_level) {
+              levels.resize(std::max(uint32_t(2 * levels.size()), node_level));
+            }
+          }
+          levels.at(node_level).push_back(fo);
+          if (std::find(std::begin(used), std::end(used), node_level) ==
+              std::end(used)) {
+            used.push_back(node_level);
+            std::sort(std::begin(used), std::end(used));
+          }
+        }
+
+        return true;
+      });
+    }
+    level.clear();
+  }
+}
 } // namespace detail
 
 /*! \brief Performs in-place expansion of a set of nodes towards TFO
@@ -1079,5 +1184,171 @@ protected:
   std::vector<uint32_t> refs;
   std::vector<std::vector<node>> levels;
 }; /* create_window_impl */
+
+template <typename Ntk>
+class create_mffw_impl {
+ public:
+  using node = typename Ntk::node;
+  using signal = typename Ntk::signal;
+
+  struct window {
+    std::vector<node> inputs;
+    std::vector<node> nodes;
+    std::vector<signal> outputs;
+  };
+
+ protected:
+  /* constant node used to denotes invalid window element */
+  static constexpr node INVALID_NODE{0};
+
+  /* number of iterations */
+  static constexpr uint32_t NUM_ITERATIONS{5};
+
+ public:
+  create_mffw_impl(Ntk const& ntk)
+      : ntk(ntk), path(ntk.size()), refs(ntk.size()) {}
+
+  void resize(uint32_t size) {
+    path.resize(size);
+    refs.resize(size);
+  }
+
+  std::optional<window> run(node const& pivot, uint32_t cut_size,
+                            uint32_t num_levels) {
+    /* find a reconvergence from the pivot and collect the nodes */
+    std::optional<std::vector<node>> nodes;
+    if (!(nodes = identify_reconvergence(pivot, num_levels))) {
+      /* if there is no reconvergence, then optimization is not possible */
+      return std::nullopt;
+    }
+
+    /* collect the fanins for these nodes */
+    std::vector<node> inputs = collect_inputs(ntk, *nodes);
+    if (inputs.size() <= cut_size + 3) {
+      /* expand the nodes towards the TFI */
+      expand_towards_tfi(ntk, inputs, cut_size);
+
+      /* compute the cover of the (pivot, inputs)-cut */
+      *nodes = cover(ntk, pivot, inputs);
+
+      /* expand the nodes towards the TFO */
+      std::sort(std::begin(inputs), std::end(inputs));
+      detail::levelized_expand_towards_tfo_mffw(ntk, inputs, *nodes, levels);
+    }
+
+    if (inputs.size() > cut_size || nodes->empty()) {
+      return std::nullopt;
+    }
+
+    /* top. sort nodes */
+    std::sort(std::begin(inputs), std::end(inputs));
+    std::sort(std::begin(*nodes), std::end(*nodes));
+
+    /* collect the nodes with fanout outside of nodes */
+    std::vector<signal> outputs = collect_outputs(ntk, inputs, *nodes, refs);
+    assert(outputs.size() > 0u);
+
+    return window{inputs, *nodes, outputs};
+  }
+
+ protected:
+  std::optional<std::vector<node>> identify_reconvergence(
+      node const& pivot, uint64_t num_iterations) {
+    assert(!ntk.is_ci(pivot) && !ntk.is_constant(pivot));
+
+    ntk.new_color();
+    visited.clear();
+    ntk.foreach_fanin(pivot, [&](signal const& fi) {
+      uint32_t const color = ntk.new_color();
+      node const& n = ntk.get_node(fi);
+      path[n] = INVALID_NODE;
+      visited.push_back(n);
+      ntk.paint(n, color);
+    });
+
+    uint64_t start{0};
+    uint64_t stop;
+    for (uint32_t iteration = 0u; iteration < num_iterations; ++iteration) {
+      stop = visited.size();
+      for (uint32_t i = start; i < stop; ++i) {
+        node const n = visited.at(i);
+        std::optional<node> meet = explore_frontier_of_node(n);
+        if (meet) {
+          visited.clear();
+          gather_nodes_recursively(path[*meet]);
+          gather_nodes_recursively(n);
+          visited.push_back(pivot);
+          return visited;
+        }
+      }
+      start = stop;
+    }
+
+    return std::nullopt;
+  }
+
+  std::optional<node> explore_frontier_of_node(node const& n) {
+    if (ntk.is_constant(n) || ntk.is_ci(n)) {
+      return std::nullopt;
+    }
+
+    std::optional<node> meet;
+    ntk.foreach_fanin(n, [&](signal const& fi) {
+      node const& fi_node = ntk.get_node(fi);
+      if (ntk.eval_color(n,
+                         [this](auto c) {
+                           return c > ntk.current_color() - ntk.max_fanin_size;
+                         }) &&
+          ntk.eval_color(fi_node,
+                         [this](auto c) {
+                           return c > ntk.current_color() - ntk.max_fanin_size;
+                         }) &&
+          ntk.eval_color(n, fi_node,
+                         [](auto c0, auto c1) { return c0 != c1; })) {
+        meet = fi_node;
+        return false;
+      }
+
+      if (ntk.eval_color(fi_node, [this](auto c) {
+            return c > ntk.current_color() - ntk.max_fanin_size;
+          })) {
+        return true; /* next */
+      }
+
+      ntk.paint(fi_node, n);
+      path[fi_node] = n;
+      visited.push_back(fi_node);
+
+      return true; /* next */
+    });
+
+    return meet;
+  }
+
+  /* collect nodes recursively following along the `path` until INVALID_NODE is
+   * reached */
+  void gather_nodes_recursively(node const& n) {
+    if (n == INVALID_NODE) {
+      return;
+    }
+
+    visited.push_back(n);
+
+    node const pred = path[n];
+    if (pred == INVALID_NODE) {
+      return;
+    }
+
+    assert(ntk.eval_color(n, pred, [](auto c0, auto c1) { return c0 == c1; }));
+    gather_nodes_recursively(pred);
+  }
+
+ protected:
+  Ntk const& ntk;
+  std::vector<node> visited;
+  std::vector<node> path;
+  std::vector<uint32_t> refs;
+  std::vector<std::vector<node>> levels;
+}; /* create_mffw_impl */
 
 } /* namespace mockturtle */

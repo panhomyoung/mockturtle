@@ -338,6 +338,296 @@ public:
     assert( count_reachable_dead_nodes( ntk ) == 0u );
   }
 
+  void run_mffw() {
+    stopwatch t(st.time_total);
+
+    create_mffw_impl windowing(ntk);
+    uint32_t const size = ntk.size();
+    for (uint32_t n = 0u; n < size; ++n) {
+      if (ntk.is_constant(n) || ntk.is_ci(n) || ntk.is_dead(n)) {
+        continue;
+      }
+
+      if (const auto w = call_with_stopwatch(st.time_window, [&]() {
+            return windowing.run(n, ps.cut_size, ps.num_levels);
+          })) {
+        ++st.num_windows;
+
+        auto topo_win = call_with_stopwatch(
+            st.time_topo_sort, ([&]() {
+              window_view win(ntk, w->inputs, w->outputs, w->nodes);
+              topo_view topo_win{win};
+              return topo_win;
+            }));
+
+        abc_index_list il;
+        call_with_stopwatch(st.time_encode, [&]() { encode(il, topo_win); });
+
+        auto il_opt = optimize(il);
+        if (!il_opt) {
+          continue;
+        }
+
+        std::vector<signal> signals;
+        for (auto const& i : w->inputs) {
+          signals.push_back(ntk.make_signal(i));
+        }
+
+        std::vector<signal> outputs;
+        topo_win.foreach_co([&](signal const& o) { outputs.push_back(o); });
+
+        uint32_t counter{0};
+        ++st.num_substitutions;
+
+        /* ensure that no dead nodes are reachable */
+        assert(count_reachable_dead_nodes(ntk) == 0u);
+
+        std::list<std::pair<node, signal>> substitutions;
+        insert(ntk, std::begin(signals), std::end(signals), *il_opt,
+               [&](signal const& _new) {
+                 assert(!ntk.is_dead(ntk.get_node(_new)));
+                 auto const _old = outputs.at(counter++);
+                 if (_old == _new) {
+                   return true;
+                 }
+
+                 /* ensure that _old is not in the TFI of _new */
+                 // assert( !is_contained_in_tfi( ntk, ntk.get_node( _new ),
+                 // ntk.get_node( _old ) ) );
+                 if (ps.filter_cyclic_substitutions &&
+                     call_with_stopwatch(st.time_window, [&]() {
+                       return is_contained_in_tfi(ntk, ntk.get_node(_new),
+                                                  ntk.get_node(_old));
+                     })) {
+                   std::cout << "undo resubstitution " << ntk.get_node(_old)
+                             << std::endl;
+                   substitutions.emplace_back(std::make_pair(
+                       ntk.get_node(_old),
+                       ntk.is_complemented(_old) ? !_new : _new));
+                   for (auto it = std::rbegin(substitutions);
+                        it != std::rend(substitutions); ++it) {
+                     if (ntk.fanout_size(ntk.get_node(it->second)) == 0u) {
+                       ntk.take_out_node(ntk.get_node(it->second));
+                     }
+                   }
+                   substitutions.clear();
+                   return false;
+                 }
+
+                 substitutions.emplace_back(
+                     std::make_pair(ntk.get_node(_old),
+                                    ntk.is_complemented(_old) ? !_new : _new));
+                 return true;
+               });
+
+        /* ensure that no dead nodes are reachable */
+        assert(count_reachable_dead_nodes(ntk) == 0u);
+        substitute_nodes(substitutions);
+
+        /* recompute levels and depth */
+        if (ps.level_update_strategy == window_rewriting_params::recompute) {
+          call_with_stopwatch(st.time_levels, [&]() { ntk.update_levels(); });
+        }
+        if (ps.level_update_strategy != window_rewriting_params::dont_update) {
+          update_depth();
+        }
+
+        /* ensure that no dead nodes are reachable */
+        assert(count_reachable_dead_nodes(ntk) == 0u);
+
+        /* ensure that the network structure is still acyclic */
+        assert(network_is_acyclic(ntk));
+
+        if (ps.level_update_strategy == window_rewriting_params::precise ||
+            ps.level_update_strategy == window_rewriting_params::recompute) {
+          /* ensure that the levels and depth is correct */
+          assert(check_network_levels(ntk));
+        }
+
+        /* update internal data structures in windowing */
+        windowing.resize(ntk.size());
+      }
+    }
+
+    /* ensure that no dead nodes are reachable */
+    assert(count_reachable_dead_nodes(ntk) == 0u);
+  }
+
+//   void run_mffw() {
+//     stopwatch t(st.time_total);
+
+//     create_mffw_impl windowing(ntk);
+//     uint32_t const size = ntk.size();
+//     for (uint32_t n = 0u; n < size; ++n) {
+//       if (ntk.is_constant(n) || ntk.is_ci(n) || ntk.is_dead(n)) {
+//         continue;
+//       }
+
+//       if (const auto w = call_with_stopwatch(st.time_window, [&]() {
+//             return windowing.run(n, ps.cut_size, ps.num_levels);
+//           })) {
+//         ++st.num_windows;
+
+//         auto topo_win = call_with_stopwatch(
+//             st.time_topo_sort, ([&]() {
+//               window_view win(ntk, w->inputs, w->outputs, w->nodes);
+//               topo_view topo_win{win};
+//               return topo_win;
+//             }));
+
+//         abc_index_list il;
+//         call_with_stopwatch(st.time_encode, [&]() { encode(il, topo_win); });
+
+//         auto il_opt = optimize(il);
+//         if (!il_opt) {
+//           continue;
+//         }
+
+//         std::vector<signal> signals;
+//         for (auto const& i : w->inputs) {
+//           signals.push_back(ntk.make_signal(i));
+//         }
+
+//         std::vector<signal> outputs;
+//         topo_win.foreach_co([&](signal const& o) { outputs.push_back(o); });
+//         std::vector<node> inputs;
+//         topo_win.foreach_pi([&](auto const& o) { inputs.push_back(o); });
+//         int nr_in = inputs.size();
+
+//         if (outputs.size() > 6) {
+//           uint32_t counter{0};
+//           ++st.num_substitutions;
+
+//           /* ensure that no dead nodes are reachable */
+//           assert(count_reachable_dead_nodes(ntk) == 0u);
+
+//           std::list<std::pair<node, signal>> substitutions;
+//           insert(ntk, std::begin(signals), std::end(signals), *il_opt,
+//                  [&](signal const& _new) {
+//                    assert(!ntk.is_dead(ntk.get_node(_new)));
+//                    auto const _old = outputs.at(counter++);
+//                    if (_old == _new) {
+//                      return true;
+//                    }
+
+//                    /* ensure that _old is not in the TFI of _new */
+//                    // assert( !is_contained_in_tfi( ntk, ntk.get_node( _new ),
+//                    // ntk.get_node( _old ) ) );
+//                    if (ps.filter_cyclic_substitutions &&
+//                        call_with_stopwatch(st.time_window, [&]() {
+//                          return is_contained_in_tfi(ntk, ntk.get_node(_new),
+//                                                     ntk.get_node(_old));
+//                        })) {
+//                      std::cout << "undo resubstitution " << ntk.get_node(_old)
+//                                << std::endl;
+//                      substitutions.emplace_back(std::make_pair(
+//                          ntk.get_node(_old),
+//                          ntk.is_complemented(_old) ? !_new : _new));
+//                      for (auto it = std::rbegin(substitutions);
+//                           it != std::rend(substitutions); ++it) {
+//                        if (ntk.fanout_size(ntk.get_node(it->second)) == 0u) {
+//                          ntk.take_out_node(ntk.get_node(it->second));
+//                        }
+//                      }
+//                      substitutions.clear();
+//                      return false;
+//                    }
+
+//                    substitutions.emplace_back(std::make_pair(
+//                        ntk.get_node(_old),
+//                        ntk.is_complemented(_old) ? !_new : _new));
+//                    return true;
+//                  });
+
+//           /* ensure that no dead nodes are reachable */
+//           assert(count_reachable_dead_nodes(ntk) == 0u);
+//           substitute_nodes(substitutions);
+
+//           /* recompute levels and depth */
+//         if (ps.level_update_strategy == window_rewriting_params::recompute) {
+//           call_with_stopwatch(st.time_levels, [&]() { ntk.update_levels(); });
+//         }
+//         if (ps.level_update_strategy != window_rewriting_params::dont_update) {
+//           update_depth();
+//         }
+
+//         /* ensure that no dead nodes are reachable */
+//         assert(count_reachable_dead_nodes(ntk) == 0u);
+
+//         /* ensure that the network structure is still acyclic */
+//         assert(network_is_acyclic(ntk));
+
+//         if (ps.level_update_strategy == window_rewriting_params::precise ||
+//             ps.level_update_strategy == window_rewriting_params::recompute) {
+//           /* ensure that the levels and depth is correct */
+//           assert(check_network_levels(ntk));
+//         }
+//         } else {
+//           std::vector<std::string> tts;
+//           default_simulator<kitty::dynamic_truth_table> sim(topo_win.num_pis());
+//           for (int i = 0; i < outputs.size(); ++i) {
+//             std::string tt = to_binary(
+//                 simulate<kitty::dynamic_truth_table>(topo_win, sim)[i]);
+//             tts.push_back(tt);
+//           }
+
+//           percy::chain chain;
+//           es(nr_in, tts, chain);
+//           std::vector<int> nodes;
+//           std::vector<int> right;
+//           std::vector<int> left;
+//           std::vector<int> output;
+//           std::vector<std::string> tt;
+//           chain.chain_infor(nodes, left, right, output, tt);
+
+//           for (int i = 0; i < output.size(); i++) {
+//             // std::cout << nodes[i + left.size()] << "-" << output[i]  << std::endl;
+//             if (tt[i + left.size()] == "1") {
+//               hex_invert(tt[output[i] - nr_in - 1]);
+//             }
+//           }
+//         //   for (int i = 0; i < left.size(); i++) {
+//         //     std::cout << nodes[i] << "-" << left[i] << "-" << right[i] << "-0x"
+//         //               << tt[i] << std::endl;
+//         //   }
+
+//           // rewrite origin MFFW by the optimal Boolean chains
+//           std::vector<signal> new_ntk;
+//           for (int i = 0; i < right.size(); i++) {
+//             if (left[i] <= nr_in && right[i] <= nr_in) {
+//               const auto node_new =
+//                   create_new_node(ntk.make_signal(inputs[left[i] - 1]),
+//                                   ntk.make_signal(inputs[right[i] - 1]), tt[i]);
+//               new_ntk.push_back(node_new);
+//             } else if (left[i] <= nr_in && right[i] > nr_in) {
+//               const auto node_new =
+//                   create_new_node(ntk.make_signal(inputs[left[i] - 1]),
+//                                   new_ntk[right[i] - 1 - nr_in], tt[i]);
+//               new_ntk.push_back(node_new);
+//             } else if (left[i] > nr_in && right[i] > nr_in) {
+//               const auto node_new =
+//                   create_new_node(new_ntk[left[i] - 1 - nr_in],
+//                                   new_ntk[right[i] - 1 - nr_in], tt[i]);
+//               new_ntk.push_back(node_new);
+//             }
+//           }
+//           std::cout << "1" << std::endl;
+//           for (int i = 0; i < outputs.size(); i++) {
+//             ntk.substitute_node(ntk.get_node(outputs[i]),
+//                                 new_ntk[output[i] - nr_in - 1]);
+//           }
+//           std::cout << "2" << std::endl;
+//         }
+        
+//         /* update internal data structures in windowing */
+//         windowing.resize(ntk.size());
+//       }
+//     }
+
+//     /* ensure that no dead nodes are reachable */
+//     assert(count_reachable_dead_nodes(ntk) == 0u);
+//   }
+
 private:
   void register_events()
   {
@@ -645,6 +935,87 @@ private:
     }
   }
 
+  void es(int nr_in, std::vector<std::string> tts, percy::chain& result){
+    percy::spec spec;
+    for (int i = 0; i < tts.size(); i++) {
+      kitty::dynamic_truth_table f(nr_in);
+      kitty::create_from_binary_string(f, tts[i]);
+      spec[i] = f;
+    }
+    percy::bsat_wrapper solver;
+    percy::ssv_encoder encoder(solver);
+    percy::chain c;
+    if (percy::synthesize(spec, c, solver, encoder) == percy::success) result.copy(c);
+  }
+
+  void hex_invert(std::string& tt_temp) {
+    if (tt_temp == "1")
+      tt_temp = "e";
+    else if (tt_temp == "2")
+      tt_temp = "d";
+    else if (tt_temp == "3")
+      tt_temp = "c";
+    else if (tt_temp == "4")
+      tt_temp = "b";
+    else if (tt_temp == "5")
+      tt_temp = "a";
+    else if (tt_temp == "6")
+      tt_temp = "9";
+    else if (tt_temp == "7")
+      tt_temp = "8";
+    else if (tt_temp == "8")
+      tt_temp = "7";
+    else if (tt_temp == "9")
+      tt_temp = "6";
+    else if (tt_temp == "a")
+      tt_temp = "5";
+    else if (tt_temp == "b")
+      tt_temp = "4";
+    else if (tt_temp == "c")
+      tt_temp = "3";
+    else if (tt_temp == "d")
+      tt_temp = "2";
+    else if (tt_temp == "e")
+      tt_temp = "1";
+    else
+      tt_temp = "0";
+  }
+
+  signal create_new_node(signal ori_node1, signal ori_node2,
+                         std::string node_tt) {
+    if (node_tt == "1"){
+      const auto node_new = ntk.create_and(!ori_node1, !ori_node2);
+      return node_new;
+    } else if (node_tt == "2") {
+      const auto node_new = ntk.create_and(ori_node1, !ori_node2);
+      return node_new;
+    } else if (node_tt == "4") {
+      const auto node_new = ntk.create_and(!ori_node1, ori_node2);
+      return node_new;
+    } else if (node_tt == "6") {
+      const auto node_new = ntk.create_xor(ori_node1, ori_node2);
+      return node_new;
+    } else if (node_tt == "7") {
+      const auto node_new = ntk.create_or(!ori_node1, !ori_node2);
+      return node_new;
+    } else if (node_tt == "8") {
+      const auto node_new = ntk.create_and(ori_node1, ori_node2);
+      return node_new;
+    } else if (node_tt == "9") {
+      const auto node_new = ntk.create_xor(ori_node1, !ori_node2);
+      return node_new;
+    } else if (node_tt == "b") {
+      const auto node_new = ntk.create_or(ori_node1, !ori_node2);
+      return node_new;
+    } else if (node_tt == "d") {
+      const auto node_new = ntk.create_or(!ori_node1, ori_node2);
+      return node_new;
+    } else if (node_tt == "e") {
+      const auto node_new = ntk.create_or(ori_node1, ori_node2);
+      return node_new;
+    }
+  }
+
 private:
   Ntk& ntk;
   window_rewriting_params ps;
@@ -672,6 +1043,21 @@ void window_rewriting( Ntk& ntk, window_rewriting_params const& ps = {}, window_
   p.run();
   if ( pst )
   {
+    *pst = st;
+  }
+}
+
+template <class Ntk>
+void mffw_rewriting(Ntk& ntk, window_rewriting_params const& ps = {},
+                      window_rewriting_stats* pst = nullptr) {
+  fanout_view fntk{ntk};
+  depth_view dntk{fntk};
+  color_view cntk{dntk};
+
+  window_rewriting_stats st;
+  detail::window_rewriting_impl p(cntk, ps, st);
+  p.run_mffw();
+  if (pst) {
     *pst = st;
   }
 }

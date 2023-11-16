@@ -937,6 +937,27 @@ namespace percy
                 }
             }
 
+            void chain_infor(std::vector<int>& node, std::vector<int>& left,
+                             std::vector<int>& right, std::vector<int>& output,
+                             std::vector<std::string>& tt) {
+                for (size_t i = 0; i < steps.size(); i++) {
+                    const auto& step = steps[i];
+                    const auto idx = nr_in + i + 1;
+                    node.push_back(idx);
+                    tt.push_back(kitty::to_hex(operators[i]));
+                    left.push_back(step[0] + 1);
+                    right.push_back(step[1] + 1);
+                }
+                for (size_t m = 0u; m < outputs.size(); m++) {
+                    const auto out = outputs[m];
+                    const auto inv = out & 1;
+                    const auto var = out >> 1;
+                    node.push_back(m);
+                    output.push_back(var);
+                    tt.push_back(inv ? "1" : "2");
+                }
+            }
+
             /*******************************************************************
                 Functions to convert the chain to a parseable expression.
                 Currently only supported for single-output normal chains with
