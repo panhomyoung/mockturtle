@@ -188,6 +188,9 @@ private:
   typename std::array<uint32_t, MaxLeaves>::iterator _end;
 
   T _data;
+
+public:
+  std::vector<uint32_t> pins;
 };
 
 /*! \brief Compare two cuts.
