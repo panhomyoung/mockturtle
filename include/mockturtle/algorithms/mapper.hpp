@@ -2723,7 +2723,6 @@ binding_view<klut_network> map( Ntk const& ntk, tech_library<NInputs, Configurat
   map_stats st;
   detail::tech_map_impl<Ntk, CutSize, CutData, NInputs, Configuration> p( ntk, library, ps, st );
   auto res = p.run();
-  res.set_network_name(ntk.get_network_name());
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
   if ( ps.verbose && !st.mapping_error )
