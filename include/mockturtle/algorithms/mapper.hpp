@@ -371,7 +371,6 @@ private:
         return false;
       }
     }
-
     /* compute mapping using global area flow */
     while ( iteration < ps.area_flow_rounds + 1 )
     {
@@ -663,7 +662,7 @@ private:
       {
         continue;
       }
-
+      
       /* match positive phase */
       match_phase<DO_AREA>( n, 0u );
 
@@ -1297,7 +1296,7 @@ private:
     auto& node_data = node_match[index];
     auto& cut_matches = matches[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
-
+    std::cout<<"match phase 01\n";
     /* recompute best match info */
     if ( best_supergate != nullptr )
     {
@@ -1318,7 +1317,7 @@ private:
         ++ctr;
       }
     }
-
+    std::cout<<"match phase 02\n";
     /* foreach cut */
     for ( auto& cut : cuts.cuts( index ) )
     {
@@ -1338,6 +1337,7 @@ private:
         continue;
       }
 
+      std::cout<<"match phase 02\n";
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
@@ -1370,16 +1370,16 @@ private:
           best_phase = gate_polarity;
           best_supergate = &gate;
           // compute the wirelength of the best cut
-          node_position gate_position = compute_gate_position(*cut);
-          double best_wirelength =
-              compute_match_wirelength(*cut, gate_position, best_phase);
-          double best_total_wirelength =
-              compute_match_total_wirelength(*cut, gate_position, best_phase);
-          node_data.wirelength[phase] = best_wirelength;
-          node_data.total_wirelength[phase] = best_total_wirelength;
+          // node_position gate_position = compute_gate_position(*cut);
+          // double best_wirelength =
+          //     compute_match_wirelength(*cut, gate_position, best_phase);
+          // double best_total_wirelength =
+          //     compute_match_total_wirelength(*cut, gate_position, best_phase);
+          // node_data.wirelength[phase] = best_wirelength;
+          // node_data.total_wirelength[phase] = best_total_wirelength;
         }
       }
-
+    std::cout<<"match phase 03\n";
       ++cut_index;
     }
 
@@ -1488,13 +1488,13 @@ private:
           best_phase = gate_polarity;
           best_supergate = &gate;
           // compute the wirelength of the best cut
-          node_position gate_position = compute_gate_position(*cut);
-          double best_wirelength =
-              compute_match_wirelength(*cut, gate_position, best_phase);
-          double best_total_wirelength =
-              compute_match_total_wirelength(*cut, gate_position, best_phase);
-          node_data.wirelength[phase] = best_wirelength;
-          node_data.total_wirelength[phase] = best_total_wirelength;
+          // node_position gate_position = compute_gate_position(*cut);
+          // double best_wirelength =
+          //     compute_match_wirelength(*cut, gate_position, best_phase);
+          // double best_total_wirelength =
+          //     compute_match_total_wirelength(*cut, gate_position, best_phase);
+          // node_data.wirelength[phase] = best_wirelength;
+          // node_data.total_wirelength[phase] = best_total_wirelength;
         }
       }
 
@@ -2720,6 +2720,7 @@ binding_view<klut_network> map( Ntk const& ntk, tech_library<NInputs, Configurat
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
 
+  std::cout<<"technology mapping without node position\n";
   map_stats st;
   detail::tech_map_impl<Ntk, CutSize, CutData, NInputs, Configuration> p( ntk, library, ps, st );
   auto res = p.run();
