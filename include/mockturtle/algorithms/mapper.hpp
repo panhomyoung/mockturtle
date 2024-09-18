@@ -1296,7 +1296,6 @@ private:
     auto& node_data = node_match[index];
     auto& cut_matches = matches[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
-    std::cout<<"match phase 01\n";
     /* recompute best match info */
     if ( best_supergate != nullptr )
     {
@@ -1317,7 +1316,6 @@ private:
         ++ctr;
       }
     }
-    std::cout<<"match phase 02\n";
     /* foreach cut */
     for ( auto& cut : cuts.cuts( index ) )
     {
@@ -1337,7 +1335,6 @@ private:
         continue;
       }
 
-      std::cout<<"match phase 02\n";
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
@@ -1379,7 +1376,6 @@ private:
           // node_data.total_wirelength[phase] = best_total_wirelength;
         }
       }
-    std::cout<<"match phase 03\n";
       ++cut_index;
     }
 
@@ -2720,7 +2716,6 @@ binding_view<klut_network> map( Ntk const& ntk, tech_library<NInputs, Configurat
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
 
-  std::cout<<"technology mapping without node position\n";
   map_stats st;
   detail::tech_map_impl<Ntk, CutSize, CutData, NInputs, Configuration> p( ntk, library, ps, st );
   auto res = p.run();
