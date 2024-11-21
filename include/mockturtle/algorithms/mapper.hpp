@@ -4478,26 +4478,7 @@ private:
  * \param ps Mapping params
  * \param pst Mapping statistics
  */
-template<class Ntk, unsigned CutSize = 4u, typename CutData = cut_enumeration_exact_map_cut, class NtkDest, unsigned NInputs>
-NtkDest map( Ntk& ntk, exact_library<NtkDest, NInputs> const& library, map_params const& ps = {}, map_stats* pst = nullptr )
-{
-  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
-  static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
-  static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
-  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
-  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
-  static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
-  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
-  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
-  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
-  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
-  static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
-  static_assert( has_incr_value_v<NtkDest>, "Ntk does not implement the incr_value method" );
-  static_assert( has_decr_value_v<NtkDest>, "Ntk does not implement the decr_value method" );
-  static_assert( has_foreach_ri_v<Ntk> == has_create_ri_v<NtkDest>, "Ntk and NtkDest networks are not both sequential" );
-  static_assert( has_foreach_ro_v<Ntk> == has_create_ro_v<NtkDest>, "Ntk and NtkDest networks are not both sequential" );
 
-  map_stats st;
   detail::exact_map_impl<NtkDest, CutSize, CutData, Ntk, NInputs> p( ntk, library, ps, st );
   auto res = p.run();
 
