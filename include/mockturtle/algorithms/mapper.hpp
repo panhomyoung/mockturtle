@@ -65,8 +65,19 @@ namespace mockturtle
 {
 
 struct node_position {
-  int x_coordinate = 0;
-  int y_coordinate = 0;
+  node_position() = default;
+  node_position(double const& x, double const& y)
+  {
+    x_coordinate = x;
+    y_coordinate = y;
+  }
+  node_position(node_position const& other)
+  {
+    x_coordinate = other.x_coordinate;
+    y_coordinate = other.y_coordinate;
+  }
+  double x_coordinate = 0;
+  double y_coordinate = 0;
 };
 using Vec_node_position = std::vector<node_position>;
 
@@ -91,7 +102,7 @@ struct map_params
   cut_enumeration_params cut_enumeration_ps{};
 
   /*! \brief Parameters for mapping model. */
-  enum strategy_t { delay, area, wirelength, balance, def } strategy = def;
+  enum strategy_t { delay, area, wirelength, balance, amd, d_only, def } strategy = def;
 
   /*! \brief Required time for delay optimization. */
   double required_time{ 0.0f };
@@ -131,6 +142,21 @@ struct map_params
 
   /*! \brief Be verbose. */
   bool verbose{ false };
+
+  /* path for saving best reward result */
+  std::string best_result_file = "best_result_file";
+
+  /* path for saving best multiplied reward result */
+  std::string best_mulResult_file = "best_mulResult_file";
+
+  /* path of def file of baseline */
+  std::string baseline_def = "";
+
+  /* path of netlist of baseline*/
+  std::string baseline_v = "";
+
+  /* path of saving intermediate file */
+  std::string result_dir = "";
 };
 
 /*! \brief Statistics for mapper.
@@ -217,6 +243,8 @@ struct node_match_tech
   double total_wirelength[2];
   /* required maximum wirelength */
   double required_wirelength[2];
+  /* flag indicates if the node is match with a gate in incremental mapping */
+  bool set_flag[2] { false, false };
 
   /* number of references in the cover 0: pos, 1: neg, 2: pos+neg */
   uint32_t map_refs[3];
@@ -371,7 +399,6 @@ private:
         return false;
       }
     }
-
     /* compute mapping using global area flow */
     while ( iteration < ps.area_flow_rounds + 1 )
     {
@@ -663,7 +690,7 @@ private:
       {
         continue;
       }
-
+      
       /* match positive phase */
       match_phase<DO_AREA>( n, 0u );
 
@@ -1297,7 +1324,7 @@ private:
     auto& node_data = node_match[index];
     auto& cut_matches = matches[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
-
+    // std::cout<<"match phase 01\n";
     /* recompute best match info */
     if ( best_supergate != nullptr )
     {
@@ -1318,7 +1345,7 @@ private:
         ++ctr;
       }
     }
-
+    // std::cout<<"match phase 02\n";
     /* foreach cut */
     for ( auto& cut : cuts.cuts( index ) )
     {
@@ -1338,6 +1365,7 @@ private:
         continue;
       }
 
+      // std::cout<<"match phase 02\n";
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
@@ -1359,7 +1387,7 @@ private:
           if ( worst_arrival > node_data.required[phase] + epsilon )
             continue;
         }
-
+        
         if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
         {
           best_arrival = worst_arrival;
@@ -1369,17 +1397,9 @@ private:
           best_area = gate.area;
           best_phase = gate_polarity;
           best_supergate = &gate;
-          // compute the wirelength of the best cut
-          node_position gate_position = compute_gate_position(*cut);
-          double best_wirelength =
-              compute_match_wirelength(*cut, gate_position, best_phase);
-          double best_total_wirelength =
-              compute_match_total_wirelength(*cut, gate_position, best_phase);
-          node_data.wirelength[phase] = best_wirelength;
-          node_data.total_wirelength[phase] = best_total_wirelength;
         }
       }
-
+    // std::cout<<"match phase 03\n";
       ++cut_index;
     }
 
@@ -1488,13 +1508,13 @@ private:
           best_phase = gate_polarity;
           best_supergate = &gate;
           // compute the wirelength of the best cut
-          node_position gate_position = compute_gate_position(*cut);
-          double best_wirelength =
-              compute_match_wirelength(*cut, gate_position, best_phase);
-          double best_total_wirelength =
-              compute_match_total_wirelength(*cut, gate_position, best_phase);
-          node_data.wirelength[phase] = best_wirelength;
-          node_data.total_wirelength[phase] = best_total_wirelength;
+          // node_position gate_position = compute_gate_position(*cut);
+          // double best_wirelength =
+          //     compute_match_wirelength(*cut, gate_position, best_phase);
+          // double best_total_wirelength =
+          //     compute_match_total_wirelength(*cut, gate_position, best_phase);
+          // node_data.wirelength[phase] = best_wirelength;
+          // node_data.total_wirelength[phase] = best_total_wirelength;
         }
       }
 
@@ -2720,6 +2740,7 @@ binding_view<klut_network> map( Ntk const& ntk, tech_library<NInputs, Configurat
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
 
+  std::cout<<"technology mapping without node position\n";
   map_stats st;
   detail::tech_map_impl<Ntk, CutSize, CutData, NInputs, Configuration> p( ntk, library, ps, st );
   auto res = p.run();
@@ -2935,9 +2956,6 @@ public:
         return res;
       }
     }
-    
-    std::cout << "print node match 1: " << std::endl;
-    print_node_match();
 
     /* compute mapping using global area flow */
     while ( iteration < ps.area_flow_rounds + 1 )
@@ -2948,9 +2966,6 @@ public:
         return res;
       }
     }
-
-    std::cout << "print node match 2: " << std::endl;
-    print_node_match();
 
     /* compute mapping using exact area */
     while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
@@ -2971,9 +2986,6 @@ public:
         }
       }
     }
-
-    std::cout << "print node match 3: " << std::endl;
-    print_node_match();
 
     /* generate the output network using the computed mapping */
     finalize_cover( res, old2new );
