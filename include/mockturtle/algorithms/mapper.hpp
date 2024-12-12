@@ -1280,7 +1280,6 @@ private:
           node_match[leaf].required_wirelength[phase] =
               std::min(node_match[leaf].required_wirelength[phase],
                        node_data.required_wirelength[use_phase] - wire);
-          std::cout<<"x is : "<<lp.x_coordinate<<"y is : "<<lp.y_coordinate<<"\n";
           ++ctr;
         }
       }
@@ -1297,7 +1296,6 @@ private:
           auto best_leaf_cut =
               cuts.cuts(leaf)[node_match[leaf].best_cut[phase]];
           node_position lp = match_position[leaf];
-          std::cout<<"x is : "<<lp.x_coordinate<<"y is : "<<lp.y_coordinate<<"\n";
           double wire = std::abs(np.x_coordinate - lp.x_coordinate) +
                         std::abs(np.y_coordinate - lp.y_coordinate);
           node_match[leaf].required_wirelength[phase] =
@@ -1324,7 +1322,6 @@ private:
     auto& node_data = node_match[index];
     auto& cut_matches = matches[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
-    // std::cout<<"match phase 01\n";
     /* recompute best match info */
     if ( best_supergate != nullptr )
     {
@@ -1345,7 +1342,6 @@ private:
         ++ctr;
       }
     }
-    // std::cout<<"match phase 02\n";
     /* foreach cut */
     for ( auto& cut : cuts.cuts( index ) )
     {
@@ -1365,7 +1361,6 @@ private:
         continue;
       }
 
-      // std::cout<<"match phase 02\n";
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
@@ -1399,7 +1394,6 @@ private:
           best_supergate = &gate;
         }
       }
-    // std::cout<<"match phase 03\n";
       ++cut_index;
     }
 
@@ -2740,7 +2734,6 @@ binding_view<klut_network> map( Ntk const& ntk, tech_library<NInputs, Configurat
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
 
-  std::cout<<"technology mapping without node position\n";
   map_stats st;
   detail::tech_map_impl<Ntk, CutSize, CutData, NInputs, Configuration> p( ntk, library, ps, st );
   auto res = p.run();
