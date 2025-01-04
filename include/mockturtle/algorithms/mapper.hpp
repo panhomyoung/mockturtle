@@ -477,6 +477,8 @@ private:
     /* compute mapping for total wirelength */
     if (ps.wirelength_rounds) {
       compute_required_time();
+      if (!compute_mapping_wirelength<false, true>()) return false;
+      compute_required_time();
       if (!compute_mapping_wirelength<true, true>()) return false;
     }
 
