@@ -1554,7 +1554,12 @@ private:
         best_arrival = std::max(best_arrival, arrival_pin);
         ++ctr;
       }
-      node_position gate_position = compute_gate_position(cut);
+      node_position gate_position;
+      if (cut.size() != 1) {
+        gate_position = compute_gate_position(cut);
+      } else {
+        gate_position = match_position[index];
+      }
       best_wirelength =
           compute_match_wirelength(cut, gate_position, best_phase);
       best_total_wirelength =
@@ -1578,7 +1583,12 @@ private:
         continue;
       }
 
-      node_position gate_position = compute_gate_position(*cut);
+      node_position gate_position;
+      if ((*cut).size() != 1) {
+        gate_position = compute_gate_position(*cut);
+      } else {
+        gate_position = match_position[index];
+      }
 
       /* match each gate and take the best one */
       for (auto const& gate : *supergates[phase]) {
