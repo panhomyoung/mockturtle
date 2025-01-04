@@ -251,7 +251,7 @@ struct node_match_tech
   /* area flow */
   float flows[3];
   /* total wirelength */
-  double total_wirelength[3];
+  double total_wirelength[2];
 };
 
 template<class Ntk, unsigned CutSize, typename CutData, unsigned NInputs, classification_type Configuration>
@@ -476,8 +476,6 @@ private:
 
     /* compute mapping for total wirelength */
     if (ps.wirelength_rounds) {
-      compute_required_time();
-      if (!compute_mapping_wirelength<false, true>()) return false;
       compute_required_time();
       if (!compute_mapping_wirelength<true, true>()) return false;
     }
@@ -780,7 +778,7 @@ private:
       match_wirelength<DO_WIRE, DO_DELAY>(n, 1u);
 
       /* try to drop one delay phase */
-      match_drop_phase<DO_WIRE, false>(n, 0);
+      match_wirelength_drop_phase<DO_WIRE>(n);
     }
 
     bool success = set_mapping_refs_wirelength<false>();
@@ -1630,6 +1628,8 @@ private:
       ++cut_index;
     }
 
+    node_data.wirelength[phase] = best_wirelength;
+    node_data.total_wirelength[phase] = best_total_wirelength;
     node_data.flows[phase] = best_area_flow;
     node_data.arrival[phase] = best_arrival;
     node_data.area[phase] = best_area;
@@ -1638,8 +1638,6 @@ private:
     node_data.best_supergate[phase] = best_supergate;
     if (best_position){
       match_position[index] = best_gate_position;
-      node_data.wirelength[phase] = best_wirelength;
-      node_data.total_wirelength[phase] = best_total_wirelength;
     } 
   }
 
@@ -1949,8 +1947,78 @@ private:
     }
   }
 
-  inline void set_match_complemented_phase( uint32_t index, uint8_t phase, double worst_arrival_n )
+  template <bool DO_WIRE>
+  void match_wirelength_drop_phase(node<Ntk> const& n) 
   {
+    auto index = ntk.node_to_index(n);
+    auto& node_data = node_match[index];
+
+    /* compute arrival adding an inverter to the other match phase */
+    double worst_arrival_npos = node_data.arrival[1] + lib_inv_delay;
+    double worst_arrival_nneg = node_data.arrival[0] + lib_inv_delay;
+    double worst_wirelength_npos = node_data.wirelength[1];
+    double worst_wirelength_nneg = node_data.wirelength[0];
+    double worst_total_wirelength_npos = node_data.total_wirelength[1];
+    double worst_total_wirelength_nneg = node_data.total_wirelength[0];
+    bool use_zero = false;
+    bool use_one = false;
+
+    /* only one phase is matched */
+    if (node_data.best_supergate[0] == nullptr) {
+      set_match_wirelength_complemented_phase(index, 1, worst_arrival_npos);
+      return;
+    } else if (node_data.best_supergate[1] == nullptr) {
+      set_match_wirelength_complemented_phase(index, 0, worst_arrival_nneg);
+      return;
+    }
+
+    /* try to use only one match to cover both phases */
+    if constexpr (!DO_WIRE) {
+      /* if arrival improves matching the other phase and inserting an inverter
+       */
+      if (worst_arrival_npos < node_data.arrival[0] + epsilon) {
+        use_one = true;
+      }
+      if (worst_arrival_nneg < node_data.arrival[1] + epsilon) {
+        use_zero = true;
+      }
+    } else {
+      /* check if both phases + inverter meet the required time */
+      use_zero = worst_arrival_nneg < (node_data.required[1] + epsilon);
+      use_one = worst_arrival_npos < (node_data.required[0] + epsilon);
+    }
+
+    if (!use_zero && !use_one) {
+      /* use both phases */
+      node_data.flows[0] = node_data.flows[0] / node_data.est_refs[0];
+      node_data.flows[1] = node_data.flows[1] / node_data.est_refs[1];
+      node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
+      node_data.same_match = false;
+      return;
+    }
+
+    /* use area flow as a tiebreaker */
+    if (use_zero && use_one) {
+      auto size_zero = cuts.cuts(index)[node_data.best_cut[0]].size();
+      auto size_one = cuts.cuts(index)[node_data.best_cut[1]].size();
+      if (compare_map_wirelength<DO_WIRE>(
+              worst_wirelength_nneg, worst_wirelength_npos, worst_arrival_nneg,
+              worst_arrival_npos, worst_total_wirelength_nneg,
+              worst_total_wirelength_npos, size_zero, size_one))
+        use_one = false;
+      else
+        use_zero = false;
+    }
+
+    if (use_zero) {
+      set_match_wirelength_complemented_phase(index, 0, worst_arrival_nneg);
+    } else {
+      set_match_wirelength_complemented_phase(index, 1, worst_arrival_npos);
+    }
+  }
+
+  inline void set_match_complemented_phase(uint32_t index, uint8_t phase,
+                                           double worst_arrival_n) {
     auto& node_data = node_match[index];
     auto phase_n = phase ^ 1;
     node_data.same_match = true;
@@ -1958,6 +2026,24 @@ private:
     node_data.best_cut[phase_n] = node_data.best_cut[phase];
     node_data.phase[phase_n] = node_data.phase[phase];
     node_data.arrival[phase_n] = worst_arrival_n;
+    node_data.area[phase_n] = node_data.area[phase];
+    node_data.flows[phase] = node_data.flows[phase] / node_data.est_refs[2];
+    node_data.flows[phase_n] = node_data.flows[phase];
+    node_data.flows[2] = node_data.flows[phase];
+  }
+
+  inline void set_match_wirelength_complemented_phase(uint32_t index,
+                                                      uint8_t phase,
+                                                      double worst_arrival_n) {
+    auto& node_data = node_match[index];
+    auto phase_n = phase ^ 1;
+    node_data.same_match = true;
+    node_data.best_supergate[phase_n] = nullptr;
+    node_data.best_cut[phase_n] = node_data.best_cut[phase];
+    node_data.phase[phase_n] = node_data.phase[phase];
+    node_data.arrival[phase_n] = worst_arrival_n;
+    node_data.wirelength[phase_n] = node_data.wirelength[phase];
+    node_data.total_wirelength[phase_n] = node_data.total_wirelength[phase];
     node_data.area[phase_n] = node_data.area[phase];
     node_data.flows[phase] = node_data.flows[phase] / node_data.est_refs[2];
     node_data.flows[phase_n] = node_data.flows[phase];
