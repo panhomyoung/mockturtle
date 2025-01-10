@@ -102,7 +102,16 @@ struct map_params
   cut_enumeration_params cut_enumeration_ps{};
 
   /*! \brief Parameters for mapping model. */
-  enum strategy_t { delay, area, wirelength, balance, amd, d_only, def } strategy = def;
+  enum strategy_t {
+    delay,
+    area,
+    performance,
+    power,
+    balance,
+    amd,
+    d_only,
+    def
+  } strategy = def;
 
   /*! \brief Required time for delay optimization. */
   double required_time{ 0.0f };
@@ -111,7 +120,7 @@ struct map_params
   bool skip_delay_round{ false };
 
   /*! \brief Placement position rounds. */
-  bool wirelength_rounds{ false };
+  bool wirelength_rounds{ true };
 
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 1u };
@@ -143,20 +152,23 @@ struct map_params
   /*! \brief Be verbose. */
   bool verbose{ false };
 
-  /* path for saving best reward result */
+  /*! \brief path for saving best reward result. */
   std::string best_result_file = "best_result_file";
 
-  /* path for saving best multiplied reward result */
+  /*! \brief path for saving best multiplied reward result. */
   std::string best_mulResult_file = "best_mulResult_file";
 
-  /* path of def file of baseline */
+  /*! \brief path of def file of baseline. */
   std::string baseline_def = "";
 
-  /* path of netlist of baseline*/
+  /*! \brief path of netlist of baseline. */
   std::string baseline_v = "";
 
-  /* path of saving intermediate file */
+  /*! \brief path of saving intermediate file. */
   std::string result_dir = "";
+
+  /*! \brief The trade-off between power mode and performance mode. */
+  double trade_off{0.0f};
 };
 
 /*! \brief Statistics for mapper.
@@ -341,11 +353,14 @@ public:
       case map_params::delay:
         if (!execute_delay_mapping()) return res;
         break;
-      case map_params::wirelength:
-        if (!execute_wirelength_mapping()) return res;
+      case map_params::performance:
+        if (!execute_wirelength_mapping<false, false>()) return res;
+        break;
+      case map_params::power:
+        if (!execute_wirelength_mapping<true, false>()) return res;
         break;
       case map_params::balance:
-        if (!execute_wirelength_balance_mapping()) return res;
+        if (!execute_wirelength_mapping<true, true>()) return res;
         break;
     }
     /* insert buffers for POs driven by PIs */
@@ -432,8 +447,8 @@ private:
     return true;
   }
 
-  bool execute_wirelength_mapping() 
-  {
+  template <bool DO_POWER, bool DO_TRADE>
+  bool execute_wirelength_mapping() {
     /* compute mapping for delay */
     if (!ps.skip_delay_round) {
       if (!compute_mapping<false>()) return false;
@@ -448,42 +463,19 @@ private:
     /* compute mapping for wirelength */
     if (ps.wirelength_rounds) {
       compute_required_time();
-      if (!compute_mapping_wirelength<false, true>()) return false;
-    }
-
-    /* compute mapping using exact area */
-    while (iteration <
-           ps.ela_rounds + ps.area_flow_rounds + 2) {
-      compute_required_time();
-      if (!compute_mapping_exact<false>()) return false;
-    }
-
-    return true;
-  }
-
-  bool execute_wirelength_balance_mapping() 
-  {
-    /* compute mapping for delay */
-    if (!ps.skip_delay_round) {
-      if (!compute_mapping<false>()) return false;
-    }
-
-    /* compute mapping using global area flow */
-    while (iteration < ps.area_flow_rounds + 1) {
-      compute_required_time();
-      if (!compute_mapping<true>()) return false;
+      if (!compute_mapping_wirelength<false, DO_POWER, DO_TRADE>())
+        return false;
     }
 
     /* compute mapping for total wirelength */
-    if (ps.wirelength_rounds) {
+    if (iteration < ps.area_flow_rounds + ps.total_wirelength_rounds + 2) {
       compute_required_time();
-      if (!compute_mapping_wirelength<false, true>()) return false;
-      compute_required_time();
-      if (!compute_mapping_wirelength<true, true>()) return false;
+      if (!compute_mapping_wirelength<true, DO_POWER, DO_TRADE>()) return false;
     }
 
     /* compute mapping using exact area */
-    while (iteration < ps.ela_rounds + ps.area_flow_rounds + 2) {
+    while (iteration < ps.ela_rounds + ps.area_flow_rounds +
+                           ps.total_wirelength_rounds + 3) {
       compute_required_time();
       if (!compute_mapping_exact<false>()) return false;
     }
@@ -654,7 +646,8 @@ private:
           /* Ignore not matched cuts */
           ( *cut )->data.ignore = true;
         }
-        if (ps.strategy == map_params::wirelength ||
+        if (ps.strategy == map_params::performance ||
+            ps.strategy == map_params::power ||
             ps.strategy == map_params::balance)
           search_pins(index, cut);
       }
@@ -758,29 +751,21 @@ private:
     return success;
   }
 
-  template <bool DO_WIRE, bool DO_DELAY>
-  bool compute_mapping_wirelength() 
-  {
-    // std::cout << "Round" << std::endl<< std::endl;
+  template <bool DO_TOTALWIRE, bool DO_POWER, bool DO_TRADE>
+  bool compute_mapping_wirelength() {
     for (auto const& n : top_order) {
       uint32_t idx = ntk.node_to_index(n);
       match_position[idx] = np[idx];
       if (ntk.is_constant(n) || ntk.is_ci(n)) continue;
 
-    //   std::cout << "match_position: ";
-    //   for (auto x : match_position) {
-    //     std::cout << "(" << x.x_coordinate << "," << x.y_coordinate << ") ";
-    //   }
-    //   std::cout << std::endl << std::endl;
-
       /* match positive wire&delay phase */
-      match_wirelength<DO_WIRE, DO_DELAY>(n, 0u);
+      match_wirelength<DO_TOTALWIRE, DO_POWER, DO_TRADE>(n, 0u);
 
       /* match negative wire&delay phase */
-      match_wirelength<DO_WIRE, DO_DELAY>(n, 1u);
+      match_wirelength<DO_TOTALWIRE, DO_POWER, DO_TRADE>(n, 1u);
 
       /* try to drop one delay phase */
-      match_wirelength_drop_phase<DO_WIRE>(n);
+      match_wirelength_drop_phase<DO_TOTALWIRE, DO_TRADE>(n);
     }
 
     bool success = set_mapping_refs_wirelength<false>();
@@ -798,32 +783,42 @@ private:
     return success;
   }
 
-  template <bool DO_WIRE, bool DO_DELAY, bool DO_AREA>
-  bool compute_mapping_wirelength_balance() 
-  {
+  bool compute_mapping_wirelength_exact() {
     for (auto const& n : top_order) {
-      uint32_t idx = ntk.node_to_index(n);
-      match_position[idx] = np[idx];
       if (ntk.is_constant(n) || ntk.is_ci(n)) continue;
-      /* match positive wire&delay phase */
-      match_wirelength_balance<DO_WIRE, DO_DELAY, DO_AREA>(n, 0u);
 
-      /* match negative wire&delay phase */
-      match_wirelength_balance<DO_WIRE, DO_DELAY, DO_AREA>(n, 1u);
+      auto index = ntk.node_to_index(n);
+      auto& node_data = node_match[index];
 
-      /* try to drop one delay phase */
-      match_drop_phase<DO_WIRE, false>(n, 0);
+      /* recursively deselect the best cut shared between
+       * the two phases if in use in the cover */
+      if (node_data.same_match && node_data.map_refs[2] != 0) {
+        if (node_data.best_supergate[0] != nullptr)
+          cut_deref<false>(cuts.cuts(index)[node_data.best_cut[0]], n, 0u);
+        else
+          cut_deref<false>(cuts.cuts(index)[node_data.best_cut[1]], n, 1u);
+      }
+
+      /* match positive phase */
+      match_wirelength_exact(n, 0u);
+
+      /* match negative phase */
+      match_wirelength_exact(n, 1u);
+
+      /* try to drop one phase */
+      match_drop_phase<true, true>(n, 0);
     }
 
-    bool success = set_mapping_refs_wirelength<false>();
+    double area_old = area;
+    bool success = set_mapping_refs_wirelength<true>();
 
     /* round stats */
     if (ps.verbose) {
+      float area_gain = float((area_old - area) / area_old * 100);
       std::stringstream stats{};
       stats << fmt::format(
-          "[i] Wire     : Delay = {:>12.2f}  Area = {:>12.2f}  Wirelength = "
-          "{:>12.2f}\n",
-          delay, area, wirelength);
+          "[i] Area     : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n",
+          delay, area, area_gain);
       st.round_stats.push_back(stats.str());
     }
 
@@ -1517,9 +1512,8 @@ private:
     return gate_position;
   }
 
-  template <bool DO_WIRE, bool DO_DELAY>
-  void match_wirelength(node<Ntk> const& n, uint8_t phase) 
-  {
+  template <bool DO_TOTALWIRE, bool DO_POWER, bool DO_TRADE>
+  void match_wirelength(node<Ntk> const& n, uint8_t phase) {
     double best_arrival = std::numeric_limits<double>::max();
     double best_area_flow = std::numeric_limits<double>::max();
     float best_area = std::numeric_limits<float>::max();
@@ -1555,11 +1549,10 @@ private:
         ++ctr;
       }
       node_position gate_position;
-      if (cut.size() != 1) {
+      if (cut.size() != 1)
         gate_position = compute_gate_position(cut);
-      } else {
+      else
         gate_position = match_position[index];
-      }
       best_wirelength =
           compute_match_wirelength(cut, gate_position, best_phase);
       best_total_wirelength =
@@ -1584,11 +1577,10 @@ private:
       }
 
       node_position gate_position;
-      if ((*cut).size() != 1) {
+      if ((*cut).size() != 1)
         gate_position = compute_gate_position(*cut);
-      } else {
+      else
         gate_position = match_position[index];
-      }
 
       /* match each gate and take the best one */
       for (auto const& gate : *supergates[phase]) {
@@ -1610,15 +1602,18 @@ private:
           ++ctr;
         }
 
-        if constexpr (DO_WIRE) {
-          if (worst_wirelength > node_data.wirelength[phase] + epsilon)
-            continue;
-        }
-        if constexpr (DO_DELAY) {
-          if (worst_arrival > node_data.required[phase] + epsilon) continue;
+        if (worst_arrival > node_data.required[phase] + epsilon) continue;
+
+        if (!DO_TRADE) {
+          if constexpr (!DO_POWER) {
+            if constexpr (DO_TOTALWIRE) {
+              if (worst_wirelength > node_data.wirelength[phase] + epsilon)
+                continue;
+            }
+          }
         }
 
-        if (compare_map_wirelength<DO_WIRE>(
+        if (compare_map_wirelength<DO_TOTALWIRE, DO_TRADE>(
                 worst_wirelength, best_wirelength, worst_arrival, best_arrival,
                 worst_total_wirelength, best_total_wirelength, cut->size(),
                 best_size)) {
@@ -1648,16 +1643,12 @@ private:
     node_data.best_cut[phase] = best_cut;
     node_data.phase[phase] = best_phase;
     node_data.best_supergate[phase] = best_supergate;
-    if (best_position){
-      match_position[index] = best_gate_position;
-    } 
+    if (best_position) match_position[index] = best_gate_position;
   }
 
-  template <bool DO_WIRE, bool DO_DELAY, bool DO_AREA>
-  void match_wirelength_balance(node<Ntk> const& n, uint8_t phase) 
-  {
+  void match_wirelength_exact(node<Ntk> const& n, uint8_t phase) {
     double best_arrival = std::numeric_limits<double>::max();
-    double best_area_flow = std::numeric_limits<double>::max();
+    float best_exact_area = std::numeric_limits<float>::max();
     float best_area = std::numeric_limits<float>::max();
     double best_wirelength = std::numeric_limits<double>::max();
     double best_total_wirelength = std::numeric_limits<double>::max();
@@ -1678,7 +1669,6 @@ private:
       auto const& cut = cuts.cuts(index)[node_data.best_cut[phase]];
       best_phase = node_data.phase[phase];
       best_arrival = 0.0f;
-      best_area_flow = best_supergate->area + cut_leaves_flow(cut, n, phase);
       best_area = best_supergate->area;
       best_cut = node_data.best_cut[phase];
       best_size = cut.size();
@@ -1690,11 +1680,24 @@ private:
         best_arrival = std::max(best_arrival, arrival_pin);
         ++ctr;
       }
-      node_position gate_position = compute_gate_position(cut);
+      node_position gate_position;
+      if (cut.size() != 1)
+        gate_position = compute_gate_position(cut);
+      else
+        gate_position = match_position[index];
       best_wirelength =
           compute_match_wirelength(cut, gate_position, best_phase);
       best_total_wirelength =
           compute_match_total_wirelength(cut, gate_position, best_phase);
+
+      /* if cut is implemented, remove it from the cover */
+      if (!node_data.same_match && node_data.map_refs[phase]) {
+        best_exact_area =
+            cut_deref<false>(cuts.cuts(index)[best_cut], n, phase);
+      } else {
+        best_exact_area = cut_ref<false>(cuts.cuts(index)[best_cut], n, phase);
+        cut_deref<false>(cuts.cuts(index)[best_cut], n, phase);
+      }
     }
 
     /* foreach cut */
@@ -1714,18 +1717,22 @@ private:
         continue;
       }
 
-      node_position gate_position = compute_gate_position(*cut);
+      node_position gate_position;
+      if ((*cut).size() != 1)
+        gate_position = compute_gate_position(*cut);
+      else
+        gate_position = match_position[index];
 
       /* match each gate and take the best one */
       for (auto const& gate : *supergates[phase]) {
         uint8_t gate_polarity = gate.polarity ^ negation;
         node_data.phase[phase] = gate_polarity;
-        double area_local = gate.area + cut_leaves_flow(*cut, n, phase);
+        node_data.area[phase] = gate.area;
+        float area_exact = cut_ref<false>(*cut, n, phase);
+        cut_deref<false>(*cut, n, phase);
         double worst_arrival = 0.0f;
-
         double worst_wirelength =
             compute_match_wirelength(*cut, gate_position, gate_polarity);
-
         double worst_total_wirelength =
             compute_match_total_wirelength(*cut, gate_position, gate_polarity);
 
@@ -1738,71 +1745,47 @@ private:
           ++ctr;
         }
 
-        if (DO_AREA) {
-          if constexpr (DO_WIRE) {
-            if (worst_wirelength >
-                1.3 * node_data.required_wirelength[phase] + epsilon)
-              continue;
-            if (worst_arrival > 1.0 * node_data.required[phase] + epsilon)
-              continue;
-          }
-        }
-        if constexpr (DO_DELAY) {
-          if (worst_arrival > 1.0 * node_data.required[phase] + epsilon)
-            continue;
-        }
+        if (worst_arrival > node_data.required[phase] + epsilon) continue;
+        if (worst_wirelength * 0.9 > node_data.wirelength[phase] + epsilon)
+          continue;
+        if (worst_total_wirelength * 0.9 >
+            node_data.total_wirelength[phase] + epsilon)
+          continue;
 
-        if constexpr (DO_AREA) {
-          if (compare_map<DO_WIRE>(
-                  area_local / area + worst_total_wirelength / total_wirelength,
-                  best_area_flow / area +
-                      best_total_wirelength / total_wirelength,
-                  worst_wirelength, best_wirelength, cut->size(), best_size)) {
-            best_wirelength = worst_wirelength;
-            best_total_wirelength = worst_total_wirelength;
-            best_arrival = worst_arrival;
-            best_area_flow = area_local;
-            best_size = cut->size();
-            best_cut = cut_index;
-            best_area = gate.area;
-            best_phase = gate_polarity;
-            best_supergate = &gate;
-            best_gate_position.x_coordinate = gate_position.x_coordinate;
-            best_gate_position.y_coordinate = gate_position.y_coordinate;
-            best_position = true;
-          } else {
-            if (compare_map_wirelength<DO_WIRE>(
-                    worst_wirelength, best_wirelength, worst_arrival,
-                    best_arrival, worst_total_wirelength, best_total_wirelength,
-                    cut->size(), best_size)) {
-              best_wirelength = worst_wirelength;
-              best_total_wirelength = worst_total_wirelength;
-              best_arrival = worst_arrival;
-              best_area_flow = area_local;
-              best_size = cut->size();
-              best_cut = cut_index;
-              best_area = gate.area;
-              best_phase = gate_polarity;
-              best_supergate = &gate;
-              best_gate_position.x_coordinate = gate_position.x_coordinate;
-              best_gate_position.y_coordinate = gate_position.y_coordinate;
-              best_position = true;
-            }
-          }
+        if (compare_map<true>(worst_arrival, best_arrival, area_exact,
+                              best_exact_area, cut->size(), best_size)) {
+          best_wirelength = worst_wirelength;
+          best_total_wirelength = worst_total_wirelength;
+          best_arrival = worst_arrival;
+          best_exact_area = area_exact;
+          best_area = gate.area;
+          best_size = cut->size();
+          best_cut = cut_index;
+          best_phase = gate_polarity;
+          best_supergate = &gate;
+          best_gate_position.x_coordinate = gate_position.x_coordinate;
+          best_gate_position.y_coordinate = gate_position.y_coordinate;
+          best_position = true;
         }
       }
+
       ++cut_index;
     }
 
-    node_data.wirelength[phase] = best_wirelength;
-    node_data.total_wirelength[phase] = best_total_wirelength;
-    node_data.flows[phase] = best_area_flow;
+    node_data.flows[phase] = best_exact_area;
     node_data.arrival[phase] = best_arrival;
     node_data.area[phase] = best_area;
     node_data.best_cut[phase] = best_cut;
     node_data.phase[phase] = best_phase;
     node_data.best_supergate[phase] = best_supergate;
+    node_data.wirelength[phase] = best_wirelength;
+    node_data.total_wirelength[phase] = best_total_wirelength;
     if (best_position) match_position[index] = best_gate_position;
+
+    if (!node_data.same_match && node_data.map_refs[phase]) {
+      best_exact_area =
+          cut_ref<false>(cuts.cuts(index)[best_cut], n, phase);
+    }
   }
 
   template<bool DO_AREA, bool ELA>
@@ -1959,9 +1942,8 @@ private:
     }
   }
 
-  template <bool DO_WIRE>
-  void match_wirelength_drop_phase(node<Ntk> const& n) 
-  {
+  template <bool DO_TOTALWIRE, bool DO_TRADE>
+  void match_wirelength_drop_phase(node<Ntk> const& n) {
     auto index = ntk.node_to_index(n);
     auto& node_data = node_match[index];
 
@@ -1985,19 +1967,13 @@ private:
     }
 
     /* try to use only one match to cover both phases */
-    if constexpr (!DO_WIRE) {
-      /* if arrival improves matching the other phase and inserting an inverter
-       */
-      if (worst_arrival_npos < node_data.arrival[0] + epsilon) {
-        use_one = true;
-      }
-      if (worst_arrival_nneg < node_data.arrival[1] + epsilon) {
-        use_zero = true;
-      }
-    } else {
-      /* check if both phases + inverter meet the required time */
-      use_zero = worst_arrival_nneg < (node_data.required[1] + epsilon);
-      use_one = worst_arrival_npos < (node_data.required[0] + epsilon);
+    /* if arrival improves matching the other phase and inserting an inverter
+     */
+    if (worst_arrival_npos < node_data.arrival[0] + epsilon) {
+      use_one = true;
+    }
+    if (worst_arrival_nneg < node_data.arrival[1] + epsilon) {
+      use_zero = true;
     }
 
     if (!use_zero && !use_one) {
@@ -2013,7 +1989,7 @@ private:
     if (use_zero && use_one) {
       auto size_zero = cuts.cuts(index)[node_data.best_cut[0]].size();
       auto size_one = cuts.cuts(index)[node_data.best_cut[1]].size();
-      if (compare_map_wirelength<DO_WIRE>(
+      if (compare_map_wirelength<DO_TOTALWIRE, DO_TRADE>(
               worst_wirelength_nneg, worst_wirelength_npos, worst_arrival_nneg,
               worst_arrival_npos, worst_total_wirelength_nneg,
               worst_total_wirelength_npos, size_zero, size_one))
@@ -2540,39 +2516,49 @@ private:
     return false;
   }
 
-  template <bool DO_TOTALWIRE>
+  template <bool DO_TOTALWIRE, bool DO_TRADE>
   inline bool compare_map_wirelength(double wirelength, double best_wirelength,
                                      double arrival, double best_arrival,
                                      double total_wirelength,
                                      double best_total_wirelength,
                                      uint32_t size, uint32_t best_size) {
-    if constexpr (DO_TOTALWIRE) {
-      if (weight_w_d(total_wirelength, arrival) <
-          weight_w_d(best_total_wirelength, best_arrival) - epsilon) {
+    if constexpr (DO_TRADE) {
+      if (weight_w_d(wirelength / best_wirelength,
+                     total_wirelength / best_total_wirelength,
+                     arrival / best_arrival) < (1 - epsilon)) {
         return true;
-      } else if (weight_w_d(total_wirelength, arrival) >
-                 weight_w_d(best_total_wirelength, best_arrival) + epsilon) {
-        return false;
-      } else if (weight_w_d(wirelength, arrival) <
-                 weight_w_d(best_wirelength, best_arrival) - epsilon) {
-        return true;
-      } else if (weight_w_d(wirelength, arrival) >
-                 weight_w_d(best_wirelength, best_arrival) + epsilon) {
+      } else if (weight_w_d(wirelength / best_wirelength,
+                            total_wirelength / best_total_wirelength,
+                            arrival / best_arrival) > (1 + epsilon)) {
         return false;
       }
     } else {
-      if (weight_w_d(wirelength, arrival) <
-          weight_w_d(best_wirelength, best_arrival) - epsilon) {
-        return true;
-      } else if (weight_w_d(wirelength, arrival) >
-                 weight_w_d(best_wirelength, best_arrival) + epsilon) {
-        return false;
-      } else if (weight_w_d(total_wirelength, arrival) <
-                 weight_w_d(best_total_wirelength, best_arrival) - epsilon) {
-        return true;
-      } else if (weight_w_d(total_wirelength, arrival) >
-                 weight_w_d(best_total_wirelength, best_arrival) + epsilon) {
-        return false;
+      if constexpr (DO_TOTALWIRE) {
+        if (total_wirelength < best_total_wirelength - epsilon)
+          return true;
+        else if (total_wirelength > best_total_wirelength + epsilon)
+          return false;
+        else if (wirelength < best_wirelength - epsilon)
+          return true;
+        else if (wirelength > best_wirelength + epsilon)
+          return false;
+        else if (arrival < best_arrival - epsilon)
+          return true;
+        else if (arrival > best_arrival + epsilon)
+          return false;
+      } else {
+        if (wirelength < best_wirelength - epsilon)
+          return true;
+        else if (wirelength > best_wirelength + epsilon)
+          return false;
+        else if (arrival < best_arrival - epsilon)
+          return true;
+        else if (arrival > best_arrival + epsilon)
+          return false;
+        else if (total_wirelength < best_total_wirelength - epsilon)
+          return true;
+        else if (total_wirelength > best_total_wirelength + epsilon)
+          return false;
       }
     }
     if (size < best_size) return true;
@@ -2663,7 +2649,7 @@ private:
                                 match_position[c].y_coordinate) +
                        node_match[c].total_wirelength[(best_phase >> ctr) & 1];
       auto& pin_data = node_match[c];
-      worst_wl += wl_temp / pin_data.est_refs[2];
+      worst_wl += (wl_temp / pin_data.est_refs[2]);
       ++ctr;
     }
     return worst_wl;
@@ -2694,10 +2680,10 @@ private:
     return distance;
   }
 
-  double weight_w_d(double wirelength_t, double delay_t) 
-  {
-    return 0.8 * wirelength_t  + 0.2 * delay_t / delay;
-    // return wirelength_t;
+  double weight_w_d(double wirelength_t, double total_wirelength_t, double delay_t) {
+    double wires = ((1 - ps.trade_off) * wirelength_t) +
+                   (ps.trade_off * total_wirelength_t);
+    return (0.8 * wires + 0.2 * delay_t) / 2;
   }
 
   void print_node_match() 
@@ -2740,12 +2726,12 @@ private:
   map_params const& ps;
   map_stats& st;
 
-  uint32_t iteration{ 0 };       /* current mapping iteration */
-  double delay{ 0.0f };          /* current delay of the mapping */
-  double area{ 0.0f };           /* current area of the mapping */
-  double wirelength{ 0.0f };     /* current wirelength of the mapping */
-  double total_wirelength{ 0.0f };       /* current total wirelength of the mapping */    
-  const float epsilon{ 0.005f }; /* epsilon */
+  uint32_t iteration{ 0 };         /* current mapping iteration */
+  double delay{ 0.0f };            /* current delay of the mapping */
+  double area{ 0.0f };             /* current area of the mapping */
+  double wirelength{ 0.0f };       /* current wirelength of the mapping */
+  double total_wirelength{ 0.0f }; /* current total wirelength of the mapping */    
+  const float epsilon{ 0.005f };   /* epsilon */
 
   /* lib inverter info */
   float lib_inv_area;
