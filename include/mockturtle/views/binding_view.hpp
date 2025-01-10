@@ -113,9 +113,11 @@ public:
     static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
   }
 
+  binding_view() : Ntk(), _library(), _bindings( *this ) {};
+
   binding_view<Ntk>& operator=( binding_view<Ntk> const& binding_ntk )
   {
-    Ntk::operator=( binding_ntk );
+    Ntk::_storage = binding_ntk.clone();
     _library = binding_ntk._library;
     _bindings = binding_ntk._bindings;
     return *this;

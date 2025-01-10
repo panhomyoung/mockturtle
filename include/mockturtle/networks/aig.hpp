@@ -194,6 +194,11 @@ public:
   {
     return { std::make_shared<aig_storage>( *_storage ) };
   }
+
+  aig_network copy()
+  {
+    return { std::make_shared<aig_storage>( *_storage ) };
+  }
 #pragma endregion
 
 #pragma region Primary I / O and constants

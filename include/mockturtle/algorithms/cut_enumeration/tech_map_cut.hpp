@@ -50,6 +50,8 @@ struct cut_enumeration_tech_map_cut
   float flow{ 0 };
   uint8_t match_index{ 0 };
   bool ignore{ false };
+  int x_coordinate { 0 };
+  int y_coordinate { 0 };
 };
 
 template<bool ComputeTruth>

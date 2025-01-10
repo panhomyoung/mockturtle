@@ -106,7 +106,7 @@ public:
     _init();
   }
 
-  klut_network clone() const
+  std::shared_ptr<klut_storage> clone() const
   {
     return { std::make_shared<klut_storage>( *_storage ) };
   }
