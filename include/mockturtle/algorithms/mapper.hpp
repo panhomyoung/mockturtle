@@ -768,10 +768,10 @@ protected:
           ( *cut )->data.ignore = true;
         }
         // search_nodes_pins(index, cut);
-        // if (ps.strategy == map_params::performance ||
-        //     ps.strategy == map_params::power ||
-        //     ps.strategy == map_params::balance)
-        //   search_pins(index, cut);
+        if (ps.strategy == map_params::performance ||
+            ps.strategy == map_params::power ||
+            ps.strategy == map_params::balance)
+          search_pins(index, cut);
       }
 
       matches[index] = node_matches;
