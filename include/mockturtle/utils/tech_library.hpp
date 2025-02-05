@@ -38,6 +38,7 @@
 #include <cassert>
 #include <unordered_map>
 #include <vector>
+#include <iostream>
 
 #include <kitty/constructors.hpp>
 #include <kitty/dynamic_truth_table.hpp>
@@ -898,6 +899,7 @@ private:
       uint32_t pin = 0;
       for ( auto const& gate : multi_gate )
       {
+        std::cout<<"gate name : " << gate.root->name << std::endl;
         consistency_check &= check_delay_consistency( gate, pin++ );
         exact_npn_enumeration( gate.function, [&]( auto const& tt, auto neg, auto const& perm ) {
           (void)neg;
