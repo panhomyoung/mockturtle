@@ -273,8 +273,6 @@ struct node_match_tech
   float flows[3];
   /* total wirelength */
   double total_wirelength[2];
-  /* Position of clustered node */
-  node_position match_position[2];
 };
 
 template<class Ntk, unsigned CutSize, typename CutData, unsigned NInputs, classification_type Configuration>
