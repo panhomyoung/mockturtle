@@ -1028,6 +1028,8 @@ public:
 
       if ( ntk.is_constant( node ) )
       {
+        if (index == 131)
+          std::cout<<"constant node " << index << std::endl;
         cuts.add_zero_cut( index );
       }
       else if ( ntk.is_ci( node ) )
@@ -1036,6 +1038,8 @@ public:
       }
       else
       {
+        if (index == 131)
+          std::cout<<"computing node " << index << std::endl;
         if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
         {
           merge_cuts2( index );
@@ -1091,15 +1095,23 @@ private:
     const auto fanin = 2;
 
     uint32_t pairs{ 1 };
-    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, index]( auto child, auto i ) {
       lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
       pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+      if (index == 131)
+        std::cout<<"cut size of fanin[" << i << "] " << lcuts[i]->size() << std::endl;
     } );
     lcuts[2] = &cuts.cuts( index );
     auto& rcuts = *lcuts[fanin];
     rcuts.clear();
 
     cut_t new_cut;
+
+    if (index == 131)
+    {
+      std::cout<<"cut size of fanin0" << lcuts[0]->size() << std::endl;
+      std::cout<<"cut size of fanin1" << lcuts[1]->size() << std::endl;
+    }
 
     std::vector<cut_t const*> vcuts( fanin );
 
@@ -1135,11 +1147,15 @@ private:
     rcuts.limit( ps.cut_limit - 1 );
 
     cuts._total_cuts += rcuts.size();
+    if (index == 131)
+      std::cout<<"cut size1 " << rcuts.size() << std::endl;
 
     if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
     {
       cuts.add_unit_cut( index );
     }
+    if (index == 131)
+      std::cout<<"cut size2 " << rcuts.size() << std::endl;
   }
 
   void merge_cuts( uint32_t index )

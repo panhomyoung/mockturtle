@@ -202,6 +202,7 @@ private:
 
 public:
   std::vector<uint32_t> pins;
+  std::vector<uint32_t> nodes;
 };
 
 /*! \brief Compare two cuts.
