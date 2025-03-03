@@ -76,6 +76,15 @@ struct node_position {
     x_coordinate = other.x_coordinate;
     y_coordinate = other.y_coordinate;
   }
+  
+  node_position& operator=(node_position const& other)
+  {
+    x_coordinate = other.x_coordinate;
+    y_coordinate = other.y_coordinate;
+    return *this;
+  }
+
+
   double x_coordinate = 0;
   double y_coordinate = 0;
 };
@@ -264,6 +273,8 @@ struct node_match_tech
   float flows[3];
   /* total wirelength */
   double total_wirelength[2];
+  /* Position of clustered node */
+  node_position match_position[2];
 };
 
 template<class Ntk, unsigned CutSize, typename CutData, unsigned NInputs, classification_type Configuration>
@@ -403,7 +414,7 @@ public:
     return res;
   }
 
-private:
+protected:
   bool execute_mapping()
   {
     /* compute mapping for delay */
@@ -460,7 +471,7 @@ private:
       if (!compute_mapping<true>()) return false;
     }
 
-    /* compute mapping for wirelength */
+    /* compute mapping for total wirelength */
     if (ps.wirelength_rounds) {
       compute_required_time();
       if (!compute_mapping_wirelength<false, DO_POWER, DO_TRADE>())
@@ -474,8 +485,7 @@ private:
     }
 
     /* compute mapping using exact area */
-    while (iteration < ps.ela_rounds + ps.area_flow_rounds +
-                           ps.total_wirelength_rounds + 3) {
+    while (iteration < ps.ela_rounds + ps.area_flow_rounds + 2) {
       compute_required_time();
       if (!compute_mapping_exact<false>()) return false;
     }
@@ -551,13 +561,116 @@ private:
   }
 
   template <typename CutType>
+  void search_nodes_pins(uint32_t n, CutType* cut, uint16_t level = 0)
+  {
+    if (cut->size() <= 1) return;
+    if (level > 7)
+    {
+      std::cout << "cut size = " << cut->size() << " leaves = ";
+      for (auto& i : cut->pins)
+        std::cout << i << " ";
+      std::cout << std::endl;
+      return;
+    }
+    else if (ntk.is_ci(ntk.index_to_node(n)) || ntk.is_constant(ntk.index_to_node(n)))
+    {
+      return;
+    }
+
+    node_match[n].set_flag[0] = true;
+
+    bool is_pins = false;
+
+    ntk.foreach_fanin(ntk.index_to_node(n), [&](signal<Ntk> const& fi) {
+      uint32_t child = ntk.node_to_index(ntk.get_node(fi));
+
+      std::cout << "fanin[" << n << "] = " << child << std::endl;
+
+      if (node_match[child].set_flag[0] == true) return;
+      bool in_leaves = false;
+      for (uint32_t& i : *cut) {
+        if (child == i) {
+          in_leaves = true;
+          break;
+        }
+      }
+      if (!in_leaves) {
+        if (level > 5) {
+          std::cout << "cut size in leaves = " << cut->size() << std::endl;
+          return;
+        }
+        
+        // Add the father into the nodes collection when the node is between the root and the leaves
+        if (std::find(cut->nodes.begin(), cut->nodes.end(), n) != cut->nodes.end())
+          std::cout << "The node " << child << " has been already in the cut of " << n << std::endl;
+
+        search_nodes_pins(child, cut, level + 1);
+      } else {
+        is_pins = true;
+        if (std::find(cut->pins.begin(), cut->pins.end(), n) != cut->pins.end())
+          std::cout << "The node " << child << " has been already in the pins of " << n << std::endl;
+        return;
+      }
+    });
+    std::cout << "Leaves of node " << n << " : ";
+
+    cut->nodes.push_back(n);
+    if (is_pins) 
+    {
+      cut->pins.push_back(n);
+    }
+    std::cout << "Leaves of node " << n << " : ";
+
+    if (level == 0)
+    {
+      std::cout << "Leaves of node " << n << " : ";
+      for (auto& i : *cut)
+      {
+        std::cout << i << " ";
+      }
+      std::cout << std::endl;
+
+      if (std::find(cut->pins.begin(), cut->pins.end(), n) == cut->pins.end())
+      {
+        std::cout <<"Root node isn't in the pins of the cut" << std::endl;
+        cut->pins.push_back(n);
+      }
+
+      if (std::find(cut->nodes.begin(), cut->nodes.end(), n) == cut->nodes.end())
+      {
+        std::cout << "Root node isn't in the nodes of the cut" << std::endl;
+        cut->pins.push_back(n);
+      }
+
+      std::cout << "nodes of node " << n << " : ";
+      for (auto& i : cut->nodes)
+      {
+        std::cout << i << " ";
+        node_match[i].set_flag[0] = false;
+      }
+      std::cout << std::endl;
+    }
+  }
+
+  template <typename CutType>
   void search_pins(uint32_t n, CutType* cut, uint16_t level = 0) 
   {
     if (cut->size() <= 1) return;
-    if (level > 5 || ntk.is_ci(ntk.index_to_node(n))) return;
-    uint16_t level_ = level + 1;
+    if (level > 5)
+    {
+      std::cout << "cut size = " << cut->size() << " level = " ;
+      for (auto& i : cut->pins)
+        std::cout << i << " ";
+      std::cout << std::endl;
+      return;
+    }
+    else if (ntk.is_ci(ntk.index_to_node(n))) 
+    {
+      return;
+    }
 
-    if (cut->pins.size() == 0) cut->pins.push_back(n);
+    if (level == 0) cut->pins.push_back(n);
+    uint16_t level_ = level + 1;
 
     ntk.foreach_fanin(ntk.index_to_node(n), [&](signal<Ntk> const& fi) {
       uint32_t child = ntk.node_to_index(ntk.get_node(fi));
@@ -584,23 +697,33 @@ private:
 
   void compute_matches()
   {
+    std::cout << "Ninputs = " << NInputs << std::endl;
     /* match gates */
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
-
+      if (index == 131) std::cout << "Cut size of " << n << " = " << cuts.cuts( index ).size() << std::endl;
       std::vector<cut_match_tech<NInputs>> node_matches;
 
       auto i = 0u;
       for ( auto& cut : cuts.cuts( index ) )
       {
+        if (index == 131) 
+        {
+          if (ntk.is_constant(index)) std::cout << "131 is constant" << std::endl;
+          std::cout << "Cut size of " << n << " = " << cuts.cuts( index ).size() << std::endl;
+          for (auto& i : *cut)
+            std::cout << i << " ";
+        }
         /* ignore unit cut */
         if ( cut->size() == 1 && *cut->begin() == index )
         {
+          if (index == 131) std::cout << "ignoring for too small " << n << std::endl;
           ( *cut )->data.ignore = true;
           continue;
         }
         if ( cut->size() > NInputs )
         {
+          if (index == 131) std::cout << "ignoring for too large " << n << std::endl;
           /* Ignore cuts too big to be mapped using the library */
           ( *cut )->data.ignore = true;
           continue;
@@ -650,6 +773,7 @@ private:
             ps.strategy == map_params::power ||
             ps.strategy == map_params::balance)
           search_pins(index, cut);
+        else search_nodes_pins(index, cut);
       }
 
       matches[index] = node_matches;
@@ -757,6 +881,12 @@ private:
       uint32_t idx = ntk.node_to_index(n);
       match_position[idx] = np[idx];
       if (ntk.is_constant(n) || ntk.is_ci(n)) continue;
+
+    //   std::cout << "match_position: ";
+    //   for (auto x : match_position) {
+    //     std::cout << "(" << x.x_coordinate << "," << x.y_coordinate << ") ";
+    //   }
+    //   std::cout << std::endl << std::endl;
 
       /* match positive wire&delay phase */
       match_wirelength<DO_TOTALWIRE, DO_POWER, DO_TRADE>(n, 0u);
@@ -1549,10 +1679,11 @@ private:
         ++ctr;
       }
       node_position gate_position;
-      if (cut.size() != 1)
+      if (cut.size() != 1) {
         gate_position = compute_gate_position(cut);
-      else
+      } else {
         gate_position = match_position[index];
+      }
       best_wirelength =
           compute_match_wirelength(cut, gate_position, best_phase);
       best_total_wirelength =
@@ -1577,10 +1708,11 @@ private:
       }
 
       node_position gate_position;
-      if ((*cut).size() != 1)
+      if ((*cut).size() != 1) {
         gate_position = compute_gate_position(*cut);
-      else
+      } else {
         gate_position = match_position[index];
+      }
 
       /* match each gate and take the best one */
       for (auto const& gate : *supergates[phase]) {
@@ -1631,7 +1763,6 @@ private:
           best_position = true;
         }
       }
-
       ++cut_index;
     }
 
@@ -1643,7 +1774,9 @@ private:
     node_data.best_cut[phase] = best_cut;
     node_data.phase[phase] = best_phase;
     node_data.best_supergate[phase] = best_supergate;
-    if (best_position) match_position[index] = best_gate_position;
+    if (best_position){
+      match_position[index] = best_gate_position;
+    } 
   }
 
   void match_wirelength_exact(node<Ntk> const& n, uint8_t phase) {
@@ -1731,8 +1864,10 @@ private:
         float area_exact = cut_ref<false>(*cut, n, phase);
         cut_deref<false>(*cut, n, phase);
         double worst_arrival = 0.0f;
+
         double worst_wirelength =
             compute_match_wirelength(*cut, gate_position, gate_polarity);
+
         double worst_total_wirelength =
             compute_match_total_wirelength(*cut, gate_position, gate_polarity);
 
@@ -2719,7 +2854,7 @@ private:
               << std::endl;
   }
 
-private:
+protected:
   Ntk const& ntk;
   tech_library<NInputs, Configuration> const& library;
   std::vector<node_position> np;
@@ -3067,7 +3202,7 @@ public:
       return res;
   }
 
-private:
+protected:
   void init_nodes()
   {
     ntk.foreach_node( [this]( auto const& n, auto ) {
