@@ -273,6 +273,8 @@ struct node_match_tech
   float flows[3];
   /* total wirelength */
   double total_wirelength[2];
+  /* Position of clustered node */
+  node_position match_position[2];
 };
 
 template<class Ntk, unsigned CutSize, typename CutData, unsigned NInputs, classification_type Configuration>
@@ -767,11 +769,11 @@ protected:
           /* Ignore not matched cuts */
           ( *cut )->data.ignore = true;
         }
-        // search_nodes_pins(index, cut);
         if (ps.strategy == map_params::performance ||
             ps.strategy == map_params::power ||
             ps.strategy == map_params::balance)
           search_pins(index, cut);
+        else search_nodes_pins(index, cut);
       }
 
       matches[index] = node_matches;
