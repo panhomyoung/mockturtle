@@ -138,7 +138,7 @@ struct map_params
   uint32_t total_wirelength_rounds{1u};
 
   /*! \brief Number of rounds for exact area optimization. */
-  uint32_t ela_rounds{ 1u };
+  uint32_t ela_rounds{ 2u };
 
   /*! \brief Number of rounds for exact switching power optimization. */
   uint32_t eswp_rounds{ 0u };
@@ -275,6 +275,8 @@ struct node_match_tech
   double total_wirelength[2];
   /* Position of clustered node */
   node_position match_position[2];
+  /* total wirelength flow */
+//   double total_wirelength_flow[3];
 };
 
 template<class Ntk, unsigned CutSize, typename CutData, unsigned NInputs, classification_type Configuration>
@@ -496,7 +498,7 @@ protected:
 
         /* compute mapping using exact area */
         while (iteration < ps.ela_rounds + ps.area_flow_rounds +
-                               ps.total_wirelength_rounds + 3) {
+                               ps.total_wirelength_rounds + 2) {
           std::cout << "exact area flow" << std::endl;
           compute_required_time();
           if (!compute_mapping_exact<false>()) return false;
@@ -508,7 +510,7 @@ protected:
         if (!compute_mapping_wirelength<false, DO_TRADE>()) return false;
 
         /* compute mapping using exact area */
-        while (iteration < ps.ela_rounds + ps.area_flow_rounds + 3) {
+        while (iteration < ps.ela_rounds + ps.area_flow_rounds + 2) {
           std::cout << "exact area flow" << std::endl;
           compute_required_time();
           if (!compute_mapping_exact<false>()) return false;
