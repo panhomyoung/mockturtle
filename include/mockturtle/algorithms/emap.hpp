@@ -100,7 +100,7 @@ struct emap_params
    * Structural uses pattern matching for fully-DSD cells,
    * Hybrid combines the two.
    */
-  enum
+  enum matching_mode_t
   {
     boolean,
     structural,
@@ -5157,7 +5157,7 @@ private:
         class_list.push_back( it );
     }
 
-    std::sort( class_list.begin(), class_list.end(), [&]( auto const& a, auto const& b ) {
+    std::stable_sort( class_list.begin(), class_list.end(), [&]( auto const& a, auto const& b ) {
       return a.first[2] > b.first[2];
     } );
 
@@ -5300,7 +5300,7 @@ private:
       }
     }
 
-    std::sort( order.begin(), order.end(), [&]( size_t a, size_t b ) {
+    std::stable_sort( order.begin(), order.end(), [&]( size_t a, size_t b ) {
       return tts[a] < tts[b];
     } );
 
